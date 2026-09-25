@@ -6,11 +6,12 @@ from statistics import mean
 from . import odds_math
 from .config import current_season
 from .data.teams import match_team
-from .models.ratings import Prediction, RatingEngine
+from .models.ratings import NFL, Prediction, RatingEngine
+from .picks import fair as shrink
 
 # A model that disagrees with the market this much is usually missing information
-# (injury, QB change, weather) rather than finding value.
-CAUTION_EDGE = 0.10
+# (injury, QB change, weather) rather than finding value: NFL points, scaled for college.
+CAUTION_POINTS = 6.0
 
 
 def _day(s: str | None) -> date | None:
@@ -48,7 +49,28 @@ def _outcome(market_key: str, o: dict, pred: Prediction, home_name: str):
     return None
 
 
-def collect_offers(event: dict, pred: Prediction, min_ev: float, kelly: float) -> list[dict]:
+def _realistic(market: str, side: str, point, raw: float, market_p: float, pred: Prediction,
+               cal: dict | None) -> tuple[float, bool]:
+    """(calibrated probability, caution flag) for one offer. Without calibration, raw is used."""
+    scale = pred.margin_sd / NFL.margin_sd
+    if market == "spread":
+        home_line = point if side == "home" else -point
+        caution = abs(pred.home_margin + home_line) >= CAUTION_POINTS * scale
+    elif market == "total":
+        caution = abs(pred.total - point) >= CAUTION_POINTS * scale
+    else:
+        caution = False
+    if cal is None:
+        return raw, caution
+    if market == "moneyline":
+        return market_p + cal["ml_blend"]["w"] * (raw - market_p), caution
+    if caution:
+        return 0.5, caution
+    return shrink(raw, cal[market]["k"]), caution
+
+
+def collect_offers(event: dict, pred: Prediction, min_ev: float, kelly: float,
+                   cal: dict | None = None) -> list[dict]:
     home_name, away_name = event["home_team"], event["away_team"]
     best: dict[tuple, dict] = {}
     fair: dict[tuple, list[float]] = defaultdict(list)
@@ -78,20 +100,22 @@ def collect_offers(event: dict, pred: Prediction, min_ev: float, kelly: float) -
 
     offers = []
     for key, off in best.items():
-        p = off["model_prob"]
+        raw = off["model_prob"]
         market_p = mean(fair[key])
+        p, caution = _realistic(off["market"], off["side"], off["line"], raw, market_p, pred, cal)
         ev = odds_math.expected_value(p, off["price"])
         edge = p - market_p
         offers.append({
             **off,
             "model_prob": round(p, 4),
+            "raw_prob": round(raw, 4),
             "market_prob": round(market_p, 4),
             "books": books[key],
             "edge": round(edge, 4),
             "ev": round(ev, 4),
             "kelly": round(odds_math.kelly_fraction(p, off["price"], kelly), 4),
-            "value": ev >= min_ev,
-            "caution": edge >= CAUTION_EDGE,
+            "value": ev >= min_ev and not caution,
+            "caution": caution,
         })
     order = {"moneyline": 0, "spread": 1, "total": 2}
     return sorted(offers, key=lambda o: (order[o["market"]], o["side"], o["line"] or 0))
@@ -99,7 +123,7 @@ def collect_offers(event: dict, pred: Prediction, min_ev: float, kelly: float) -
 
 def build_board(
     league: str, engine: RatingEngine, games: list[dict], odds: dict,
-    min_ev: float = 0.03, kelly: float = 0.25,
+    min_ev: float = 0.03, kelly: float = 0.25, cal: dict | None = None,
 ) -> dict:
     season = current_season()
     upcoming = [g for g in games if g["home_score"] is None]
@@ -126,7 +150,7 @@ def build_board(
                 "home_name": ev["home_team"], "away_name": ev["away_team"],
                 "kickoff": ev.get("commence_time"), "neutral": bool(g["neutral"]),
                 "prediction": pred.as_dict(),
-                "offers": collect_offers(ev, pred, min_ev, kelly),
+                "offers": collect_offers(ev, pred, min_ev, kelly, cal),
             })
     else:
         today = date.today()

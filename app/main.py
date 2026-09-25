@@ -171,7 +171,8 @@ def board(league: str, min_ev: float = 0.03, kelly: float = 0.25, force: bool = 
         odds = odds_api.get_odds(league, force=force)
     except Exception as e:  # network / quota errors shouldn't break the board
         odds = {"events": [], "error": f"Odds API error: {e}"}
-    return build_board(league, get_engine(league), games, odds, min_ev=min_ev, kelly=kelly)
+    return build_board(league, get_engine(league), games, odds, min_ev=min_ev, kelly=kelly,
+                       cal=get_picks(league)[2])
 
 
 @app.get("/api/ratings/{league}")

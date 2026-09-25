@@ -18,7 +18,7 @@ from app.data import odds_api
 from app.edges import build_board
 from app.main import refresh_league
 from app.models.ratings import PARAMS, build_engine, save_params
-from app.picks import compute_all_picks
+from app.picks import compute_all_picks, fit_calibration
 from app.tune import evaluate, tune
 
 
@@ -64,8 +64,11 @@ def cmd_backtest(a):
 
 def cmd_board(a):
     games = db.load_games(a.league)
+    all_picks, _, _ = compute_all_picks(a.league, games)
+    first = min(k[0] for k in all_picks)
+    cal = fit_calibration([ps for k, ps in all_picks.items() if k[0] >= first + 3])
     board = build_board(a.league, build_engine(a.league, games), games,
-                        odds_api.get_odds(a.league), min_ev=a.min_ev)
+                        odds_api.get_odds(a.league), min_ev=a.min_ev, cal=cal)
     if board["odds_error"]:
         print(f"[!] {board['odds_error']}")
     for c in board["games"]:

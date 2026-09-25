@@ -80,7 +80,7 @@ function renderBoard(b) {
   } else {
     $("#value-bets").innerHTML = `<div class="table-wrap"><table>
       <thead><tr><th>Game</th><th>Bet</th><th class="num">Price</th><th>Book</th>
-        <th class="num">Model</th><th class="num">Market</th><th class="num">EV</th><th class="num">Stake</th><th></th></tr></thead>
+        <th class="num">Realistic</th><th class="num">Market</th><th class="num">EV</th><th class="num">Stake</th><th></th></tr></thead>
       <tbody>${b.value_bets.map((o, i) => `<tr>
         <td>${esc(o.game)}<br><span class="muted">${kickoff(o.kickoff)}</span></td>
         <td>${esc(o.selection)} ${lineText(o)} ${o.caution ? '<span class="pill" title="Model disagrees with the market by 10%+. Check injuries and news before betting.">check news</span>' : ""}</td>
