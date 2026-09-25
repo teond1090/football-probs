@@ -1,0 +1,30 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+# In Render: New + -> Blueprint -> pick this repo. It will ask for the two API keys.
+services:
+  - type: web
+    name: football-probs
+    runtime: python
+    plan: starter            # always on; the free plan sleeps when idle and has no disk
+    region: oregon
+    branch: master
+    autoDeploy: true         # redeploys on every push to master
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/status
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATA_DIR
+        value: /var/data
+      - key: AUTO_REFRESH_HOURS
+        value: "6"
+      - key: ODDS_CACHE_MINUTES
+        value: "30"           # public site: reuse live odds longer to save API credits
+      - key: ODDS_API_KEY
+        sync: false          # you paste it in the Render dashboard; never stored in git
+      - key: CFBD_API_KEY
+        sync: false

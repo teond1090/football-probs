@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 from .. import db
-from ..config import ODDS_API_KEY, ODDS_CACHE_MINUTES
+from ..config import ODDS_API_KEY, ODDS_CACHE_MINUTES, ODDS_FORCE_COOLDOWN_MINUTES
 
 SPORT_KEYS = {"nfl": "americanfootball_nfl", "cfb": "americanfootball_ncaaf"}
 URL = "https://api.the-odds-api.com/v4/sports/{sport}/odds"
@@ -23,9 +23,11 @@ def get_odds(league: str, force: bool = False) -> dict:
 
     with db.connect() as conn:
         row = conn.execute("SELECT * FROM odds_cache WHERE league = ?", (league,)).fetchone()
-    if row and not force:
-        fetched = datetime.fromisoformat(row["fetched_at"])
-        if datetime.now(timezone.utc) - fetched < timedelta(minutes=ODDS_CACHE_MINUTES):
+    if row:
+        age = datetime.now(timezone.utc) - datetime.fromisoformat(row["fetched_at"])
+        # "force" (the Refresh odds button) still can't fire more often than the cooldown
+        limit = ODDS_FORCE_COOLDOWN_MINUTES if force else ODDS_CACHE_MINUTES
+        if age < timedelta(minutes=limit):
             return {"events": json.loads(row["payload"]), "fetched_at": row["fetched_at"],
                     "remaining": row["remaining"], "cached": True}
 

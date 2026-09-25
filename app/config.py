@@ -3,8 +3,6 @@ from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = ROOT / "data"
-DB_PATH = DATA_DIR / "football.db"
 
 
 def _load_env() -> None:
@@ -22,6 +20,11 @@ def _load_env() -> None:
 
 _load_env()
 
+# Where the SQLite database and tuned parameters live. Hosts with a persistent disk
+# (e.g. Render) point this at the mounted disk.
+DATA_DIR = Path(os.getenv("DATA_DIR", str(ROOT / "data")))
+DB_PATH = DATA_DIR / "football.db"
+
 # https://the-odds-api.com  (free tier: 500 requests/month) - live sportsbook lines
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
 # https://collegefootballdata.com/key  (free) - college schedules, scores, historical lines
@@ -29,8 +32,13 @@ CFBD_API_KEY = os.getenv("CFBD_API_KEY", "")
 
 # How long to reuse a live-odds response before spending another API request.
 ODDS_CACHE_MINUTES = int(os.getenv("ODDS_CACHE_MINUTES", "15"))
-# Re-download schedules/scores/lines on server start when older than this (0 = never).
+# While the server runs, re-download schedules/scores/lines once they are older than this
+# (checked on start and hourly). 0 = never.
 AUTO_REFRESH_HOURS = float(os.getenv("AUTO_REFRESH_HOURS", "12"))
+# Public-site guards so visitors can't burn through API quotas:
+# minimum minutes between data refreshes, and between forced live-odds refreshes.
+REFRESH_COOLDOWN_MINUTES = float(os.getenv("REFRESH_COOLDOWN_MINUTES", "10"))
+ODDS_FORCE_COOLDOWN_MINUTES = float(os.getenv("ODDS_FORCE_COOLDOWN_MINUTES", "5"))
 
 
 def current_season(today: date | None = None) -> int:

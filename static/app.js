@@ -540,7 +540,7 @@ $("#refresh-data").addEventListener("click", async (e) => {
   e.target.textContent = "Refreshing…";
   try {
     const r = await api(`/api/refresh/${state.league}`, { method: "POST" });
-    $("#board-alert").innerHTML = `<div class="alert">Updated ${r.games_upserted} games.</div>`;
+    $("#board-alert").innerHTML = `<div class="alert">${esc(r.skipped || `Updated ${r.games_upserted} games.`)}</div>`;
     await loadStatus();
     await loadBoard();
   } catch (err) {

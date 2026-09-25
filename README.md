@@ -44,6 +44,19 @@ scores, closing lines, starting QBs and rest days back to 1999. Weekly picks wor
 Data refreshes automatically when the server starts if it's older than 12 hours
 (`AUTO_REFRESH_HOURS`, 0 disables).
 
+On Windows you can also just double-click **`start.bat`**.
+
+### Deploy a 24/7 public site (Render)
+
+1. Sign in at https://render.com with GitHub.
+2. **New + → Blueprint**, pick this repo. Render reads [`render.yaml`](render.yaml): an always-on web
+   service plus a 1 GB disk so tracked bets and data survive restarts.
+3. Paste your `ODDS_API_KEY` / `CFBD_API_KEY` when asked (optional), then **Apply**.
+4. Your site is live at `https://<service-name>.onrender.com`. Every push to `master` redeploys it.
+
+The site refreshes its data every 6 hours. Public-facing refresh buttons have cooldowns so
+visitors can't burn through API quotas.
+
 ### Command line
 
 ```bash

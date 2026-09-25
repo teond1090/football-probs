@@ -2,6 +2,7 @@ import csv
 import io
 import logging
 import threading
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
@@ -12,7 +13,8 @@ from pydantic import BaseModel
 
 from . import db, odds_math
 from .backtest import run_backtest
-from .config import AUTO_REFRESH_HOURS, CFBD_API_KEY, ODDS_API_KEY, ROOT, current_season
+from .config import (AUTO_REFRESH_HOURS, CFBD_API_KEY, ODDS_API_KEY, REFRESH_COOLDOWN_MINUTES,
+                     ROOT, current_season)
 from .data import cfb, nfl, odds_api
 from .edges import build_board
 from .models.ratings import RatingEngine, build_engine
@@ -40,10 +42,16 @@ def _auto_refresh() -> None:
                 log.warning("auto-refresh of %s failed: %s", league, e)
 
 
+def _auto_refresh_loop() -> None:
+    while True:
+        _auto_refresh()
+        time.sleep(3600)
+
+
 @asynccontextmanager
 async def lifespan(_app):
     if AUTO_REFRESH_HOURS > 0:
-        threading.Thread(target=_auto_refresh, daemon=True).start()
+        threading.Thread(target=_auto_refresh_loop, daemon=True).start()
     yield
 
 
@@ -112,6 +120,9 @@ def status():
 
 @app.post("/api/refresh/{league}")
 def refresh(league: str):
+    last = db.get_meta(f"{_league(league)}_refreshed_at")
+    if last and datetime.now() - datetime.fromisoformat(last) < timedelta(minutes=REFRESH_COOLDOWN_MINUTES):
+        return {"league": league, "games_upserted": 0, "skipped": "Data was refreshed in the last few minutes."}
     try:
         n = refresh_league(_league(league))
     except RuntimeError as e:
