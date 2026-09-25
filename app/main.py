@@ -20,6 +20,7 @@ from .data import cfb, nfl, odds_api
 from .edges import build_board
 from .models.ratings import RatingEngine, build_engine
 from .best_odds import attach_best_odds
+from .sharp import SHARP_FALLBACK, SHARP_PRIMARY, books_seen, filter_books, find_value
 from .parlays import best_bets_parlay_history, legs_for_week, suggestions
 from .picks import (TIER_ORDER, apply_calibration, best_bets, best_bets_record, compute_all_picks,
                     fit_calibration, record, week_label)
@@ -92,7 +93,14 @@ def _known_teams(league: str) -> set[str]:
     return {t for g in db.load_games(league) if g["season"] >= season - 1 for t in (g["home"], g["away"])}
 
 
-def _live_week(league: str, picks: list[dict], cal: dict) -> tuple[list[dict], dict]:
+def _allowed(books: str | None) -> set[str] | None:
+    """Parse the ?books= filter (comma-separated Odds API bookmaker keys)."""
+    keys = {b.strip() for b in (books or "").split(",") if b.strip()}
+    return keys or None
+
+
+def _live_week(league: str, picks: list[dict], cal: dict,
+               allowed: set[str] | None = None) -> tuple[list[dict], dict]:
     """A copy of the week's picks with the best line/price across all sportsbooks attached."""
     picks = copy.deepcopy(picks)
     status = {"enabled": bool(ODDS_API_KEY), "matched": 0, "fetched_at": None, "error": None}
@@ -106,7 +114,8 @@ def _live_week(league: str, picks: list[dict], cal: dict) -> tuple[list[dict], d
     status["fetched_at"] = odds.get("fetched_at")
     status["remaining"] = odds.get("remaining")
     status["error"] = odds.get("error")
-    status["matched"] = attach_best_odds(league, picks, odds.get("events", []), cal, _known_teams(league))
+    events = filter_books(odds.get("events", []), allowed)
+    status["matched"] = attach_best_odds(league, picks, events, cal, _known_teams(league))
     return picks, status
 
 
@@ -163,7 +172,8 @@ def refresh(league: str):
 
 
 @app.get("/api/board/{league}")
-def board(league: str, min_ev: float = 0.03, kelly: float = 0.25, force: bool = False):
+def board(league: str, min_ev: float = 0.03, kelly: float = 0.25, force: bool = False,
+          books: str | None = None):
     games = db.load_games(_league(league))
     if not games:
         raise HTTPException(400, f"No {league.upper()} data yet - click Refresh data first.")
@@ -171,6 +181,7 @@ def board(league: str, min_ev: float = 0.03, kelly: float = 0.25, force: bool = 
         odds = odds_api.get_odds(league, force=force)
     except Exception as e:  # network / quota errors shouldn't break the board
         odds = {"events": [], "error": f"Odds API error: {e}"}
+    odds = {**odds, "events": filter_books(odds.get("events", []), _allowed(books))}
     return build_board(league, get_engine(league), games, odds, min_ev=min_ev, kelly=kelly,
                        cal=get_picks(league)[2])
 
@@ -232,10 +243,10 @@ def _sorted_picks(picks: list[dict]) -> list[dict]:
 
 
 @app.get("/api/picks/{league}")
-def weekly_picks(league: str, week: str | None = None):
+def weekly_picks(league: str, week: str | None = None, books: str | None = None):
     all_picks, starts, key = _select_week(_league(league), week)
     cal = get_picks(league)[2]
-    week_picks, odds_status = _live_week(league, all_picks[key], cal)
+    week_picks, odds_status = _live_week(league, all_picks[key], cal, _allowed(books))
     season = key[0]
     seasons = sorted({k[0] for k in all_picks}, reverse=True)
     season_keys = _ordered((k for k in all_picks if k[0] == season), starts)
@@ -292,13 +303,37 @@ def weekly_picks_csv(league: str, week: str | None = None):
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
+# --- Sharp-book value ----------------------------------------------------------------------------
+
+@app.get("/api/sharp/{league}")
+def sharp_value(league: str, min_ev: float = 0.01, kelly: float = 0.25, books: str | None = None,
+                force: bool = False):
+    _league(league)
+    try:
+        odds = odds_api.get_odds(league, force=force)
+    except Exception as e:
+        raise HTTPException(502, f"Odds API error: {e}")
+    if odds.get("error"):
+        raise HTTPException(400, odds["error"])
+    events = odds.get("events", [])
+    result = find_value(events, _allowed(books), min_ev=min_ev, kelly=kelly)
+    have_sharp = any(b["key"] == SHARP_PRIMARY for e in events for b in e.get("bookmakers", []))
+    return {
+        "league": league, **result,
+        "books": books_seen(events),
+        "sharp_books": [SHARP_PRIMARY, *SHARP_FALLBACK],
+        "pinnacle_available": have_sharp,
+        "odds_fetched_at": odds.get("fetched_at"), "odds_remaining": odds.get("remaining"),
+    }
+
+
 # --- Parlays -------------------------------------------------------------------------------------
 
 @app.get("/api/parlays/{league}")
-def parlays(league: str, week: str | None = None):
+def parlays(league: str, week: str | None = None, books: str | None = None):
     all_picks, starts, key = _select_week(_league(league), week)
     cal = get_picks(league)[2]
-    week_picks, odds_status = _live_week(league, all_picks[key], cal)
+    week_picks, odds_status = _live_week(league, all_picks[key], cal, _allowed(books))
     legs = legs_for_week(week_picks, cal)
     season = key[0]
     first = min(k[0] for k in all_picks)

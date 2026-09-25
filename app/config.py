@@ -35,6 +35,13 @@ ODDS_CACHE_MINUTES = int(os.getenv("ODDS_CACHE_MINUTES", "15"))
 # Sportsbook regions to shop (us = major US books; add us2 for more books, e.g. "us,us2").
 # Each extra region multiplies the API credits a refresh costs.
 ODDS_REGIONS = os.getenv("ODDS_REGIONS", "us")
+# Specific books to pull instead of whole regions. Every 10 books cost the same as one region,
+# so this gets Pinnacle (the sharp price) plus the main US books for 3 credits a refresh.
+# Set to empty to use ODDS_REGIONS instead.
+ODDS_BOOKMAKERS = os.getenv(
+    "ODDS_BOOKMAKERS",
+    "pinnacle,lowvig,betonlineag,draftkings,fanduel,betmgm,williamhill_us,betrivers,espnbet,fanatics",
+)
 # While the server runs, re-download schedules/scores/lines once they are older than this
 # (checked on start and hourly). 0 = never.
 AUTO_REFRESH_HOURS = float(os.getenv("AUTO_REFRESH_HOURS", "12"))

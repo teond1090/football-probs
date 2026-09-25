@@ -34,6 +34,15 @@ function lineText(o) {
   return o.market === "spread" ? signed(o.line) : o.line;
 }
 
+// ---- my sportsbooks (saved in this browser) ----------------------------------------------------
+function myBooks() {
+  try { return JSON.parse(localStorage.getItem("myBooks") || "[]"); } catch { return []; }
+}
+function setMyBooks(keys) {
+  try { localStorage.setItem("myBooks", JSON.stringify(keys)); } catch { /* private mode: not saved */ }
+}
+const booksParam = (sep = "&") => (myBooks().length ? `${sep}books=${encodeURIComponent(myBooks().join(","))}` : "");
+
 // ---- status -----------------------------------------------------------------------------------
 async function loadStatus() {
   const s = await api("/api/status");
@@ -54,7 +63,7 @@ async function loadBoard(force = false) {
   $("#value-bets").innerHTML = `<p class="muted">Loading…</p>`;
   $("#games").innerHTML = "";
   try {
-    const b = await api(`/api/board/${state.league}?min_ev=${minEv}&kelly=${kelly}&force=${force}`);
+    const b = await api(`/api/board/${state.league}?min_ev=${minEv}&kelly=${kelly}&force=${force}${booksParam()}`);
     state.board = b;
     renderBoard(b);
   } catch (e) {
@@ -353,7 +362,7 @@ async function loadPicks(week = state.week) {
   $("#picks-alert").innerHTML = "";
   $("#picks").innerHTML = `<p class="muted">Loading picks…</p>`;
   try {
-    const r = await api(`/api/picks/${state.league}${week ? `?week=${encodeURIComponent(week)}` : ""}`);
+    const r = await api(`/api/picks/${state.league}?${week ? `week=${encodeURIComponent(week)}` : ""}${booksParam()}`);
     state.picks = r;
     state.week = r.week.id;
     renderPicks(r);
@@ -533,6 +542,104 @@ for (const [id, step] of [["#week-prev", -1], ["#week-next", 1]]) {
   });
 }
 
+// ---- sharp value ------------------------------------------------------------------------------
+async function loadSharp(force = false) {
+  $("#sharp-alert").innerHTML = "";
+  $("#sharp-list").innerHTML = `<p class="muted">Comparing every sportsbook to Pinnacle…</p>`;
+  const ev = Number($("#sharp-ev").value) / 100, kelly = $("#sharp-kelly").value;
+  try {
+    const r = await api(`/api/sharp/${state.league}?min_ev=${ev}&kelly=${kelly}&force=${force}${booksParam()}`);
+    state.sharp = r;
+    renderSharp(r);
+  } catch (e) {
+    $("#sharp-hero").innerHTML = "";
+    $("#sharp-list").innerHTML = "";
+    $("#sharp-alert").innerHTML = `<div class="alert">${esc(e.message)}</div>`;
+  }
+}
+
+function renderBooksPanel(books) {
+  const mine = new Set(myBooks());
+  const sharp = new Set(state.sharp?.sharp_books || []);
+  $("#books-panel").innerHTML = `<b>Which sportsbooks can you bet at?</b>
+    <div class="muted small">Only these books are used for value bets, best prices and parlays across the app. None ticked = all books.
+      Saved in this browser.</div>
+    <div class="book-grid">${books.map((b) => `<label class="book-opt ${mine.has(b.key) ? "on" : ""}">
+      <input type="checkbox" data-book="${esc(b.key)}" ${mine.has(b.key) ? "checked" : ""}>${esc(b.title)}${sharp.has(b.key) ? ' <span class="sharp-src">sharp</span>' : ""}</label>`).join("")}</div>
+    <button class="small" id="books-save">Save &amp; refresh</button> <button class="small secondary" id="books-clear">Use all books</button>`;
+}
+
+function renderSharp(r) {
+  const bankroll = Number($("#sharp-bankroll").value) || 0;
+  const best = r.bets[0];
+  $("#sharp-hero").innerHTML = `<div class="hero">
+    <div><div class="hero-k">${r.league.toUpperCase()} · beat the sharpest price</div>
+      <div class="hero-t">Sharp value</div>
+      <div class="hero-sub">Bets where your sportsbook pays more than Pinnacle's fair odds${myBooks().length ? ` · your books: ${myBooks().length}` : " · all books"}</div></div>
+    <div class="hero-stats">
+      <div class="hero-stat"><b>${r.bets.length}</b><span>Value bets</span></div>
+      <div class="hero-stat"><b>${best ? `+${(best.ev * 100).toFixed(1)}%` : "–"}</b><span>Best edge</span></div>
+      <div class="hero-stat"><b>${r.games_with_sharp}/${r.games}</b><span>Games priced</span></div>
+    </div></div>`;
+  $("#sharp-meta").textContent = [r.odds_fetched_at && `odds ${new Date(r.odds_fetched_at).toLocaleTimeString()}`,
+    r.odds_remaining && `${r.odds_remaining} credits left`].filter(Boolean).join(" · ");
+  if (!r.pinnacle_available) {
+    $("#sharp-alert").innerHTML = `<div class="alert">Pinnacle hasn't posted prices for these games yet, so LowVig/BetOnline are used as the sharp price. Treat edges as less certain.</div>`;
+  }
+  if (!$("#books-panel").hidden) renderBooksPanel(r.books);
+
+  $("#sharp-list").innerHTML = r.bets.map((b, i) => {
+    const line = b.line == null ? "ML" : b.market === "spread" ? signed(b.line) : `${b.line}`;
+    const stake = b.kelly * bankroll;
+    return `<div class="bb">
+      <div class="bb-rank">${i + 1}</div>
+      <div>
+        <div class="bb-pick">${esc(b.selection)} ${line} <span class="price">${signed(b.price)} @ <b>${esc(b.book)}</b></span>
+          ${b.verify ? tierBadge("caution").replace("⚠ Check news", "⚠ Verify") : ""}</div>
+        <div class="bb-meta">${esc(b.game)} · ${kickoff(b.kickoff)}</div>
+        <div class="bb-meta">Fair price ${signed(b.fair_price)} (${pct(b.fair_prob)}) <span class="sharp-src">${esc(b.sharp)}</span>
+          ${b.also.length ? ` · also: ${b.also.map(esc).join(", ")}` : ""}</div>
+      </div>
+      <div class="bb-side">
+        <span class="edge-big">+${(b.ev * 100).toFixed(1)}%</span>
+        <span class="bb-stake">stake ${money(stake)}</span>
+        <button class="small" data-sharp="${i}">Track bet</button>
+      </div></div>`;
+  }).join("") || `<div class="bb-empty">No bets beat the sharp price by ${$("#sharp-ev").value}% right now${myBooks().length ? " at your books" : ""}.
+    That's common: soft books copy sharp lines quickly. Check back as lines move, especially early in the week and after injury news.</div>`;
+}
+
+$("#sharp-list").addEventListener("click", (e) => {
+  const i = e.target.dataset.sharp;
+  if (i == null) return;
+  const b = state.sharp.bets[i];
+  openTrack({
+    game: b.game, market: b.market, selection: b.selection, line: b.line,
+    price: b.price, model_prob: b.fair_prob, book: b.book,
+  }, b.kelly * (Number($("#sharp-bankroll").value) || 0));
+});
+$("#sharp-refresh").addEventListener("click", () => loadSharp(true));
+["#sharp-ev", "#sharp-kelly"].forEach((id) => $(id).addEventListener("change", () => loadSharp()));
+$("#sharp-bankroll").addEventListener("change", (e) => {
+  $("#bankroll").value = e.target.value;
+  if (state.sharp) renderSharp(state.sharp);
+});
+$("#books-toggle").addEventListener("click", () => {
+  const p = $("#books-panel");
+  p.hidden = !p.hidden;
+  if (!p.hidden) renderBooksPanel(state.sharp?.books || []);
+});
+$("#books-panel").addEventListener("change", (e) => {
+  if (e.target.dataset.book) e.target.closest(".book-opt").classList.toggle("on", e.target.checked);
+});
+$("#books-panel").addEventListener("click", (e) => {
+  if (e.target.id === "books-save") {
+    setMyBooks([...document.querySelectorAll("#books-panel input[data-book]:checked")].map((x) => x.dataset.book));
+    loadSharp();
+  }
+  if (e.target.id === "books-clear") { setMyBooks([]); renderBooksPanel(state.sharp?.books || []); loadSharp(); }
+});
+
 // ---- parlays -----------------------------------------------------------------------------------
 const parlay = { data: null, picked: new Set() };
 const decOf = (price) => (price > 0 ? 1 + price / 100 : 1 + 100 / Math.abs(price));
@@ -564,7 +671,7 @@ async function loadParlays() {
   $("#parlay-alert").innerHTML = "";
   $("#parlay-suggestions").innerHTML = `<p class="muted">Crunching every combination…</p>`;
   try {
-    const r = await api(`/api/parlays/${state.league}${state.week ? `?week=${encodeURIComponent(state.week)}` : ""}`);
+    const r = await api(`/api/parlays/${state.league}?${state.week ? `week=${encodeURIComponent(state.week)}` : ""}${booksParam()}`);
     parlay.data = r;
     parlay.picked = new Set([...parlay.picked].filter((id) => r.legs.some((l) => l.id === id)));
     renderParlays(r);
@@ -788,6 +895,7 @@ function show(tab) {
   document.querySelectorAll(".tab").forEach((s) => s.classList.toggle("active", s.id === `tab-${tab}`));
   if (tab === "picks") loadPicks();
   if (tab === "parlays") loadParlays();
+  if (tab === "sharp") loadSharp();
   if (tab === "board") loadBoard();
   if (tab === "ratings") loadRatings();
   if (tab === "matchup") loadMatchupTeams().then(runMatchup);

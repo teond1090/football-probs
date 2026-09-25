@@ -10,7 +10,8 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 from .. import db
-from ..config import ODDS_API_KEY, ODDS_CACHE_MINUTES, ODDS_FORCE_COOLDOWN_MINUTES, ODDS_REGIONS
+from ..config import (ODDS_API_KEY, ODDS_BOOKMAKERS, ODDS_CACHE_MINUTES, ODDS_FORCE_COOLDOWN_MINUTES,
+                      ODDS_REGIONS)
 
 SPORT_KEYS = {"nfl": "americanfootball_nfl", "cfb": "americanfootball_ncaaf"}
 URL = "https://api.the-odds-api.com/v4/sports/{sport}/odds"
@@ -36,7 +37,7 @@ def get_odds(league: str, force: bool = False) -> dict:
         URL.format(sport=SPORT_KEYS[league]),
         params={
             "apiKey": ODDS_API_KEY,
-            "regions": ODDS_REGIONS,
+            **({"bookmakers": ODDS_BOOKMAKERS} if ODDS_BOOKMAKERS else {"regions": ODDS_REGIONS}),
             "markets": "h2h,spreads,totals",
             "oddsFormat": "american",
         },

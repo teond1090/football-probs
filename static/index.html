@@ -30,6 +30,7 @@
     </div>
     <nav>
       <button data-tab="picks" class="active"><span class="ico" aria-hidden="true">📅</span>Weekly picks</button>
+      <button data-tab="sharp"><span class="ico" aria-hidden="true">💎</span>Sharp value</button>
       <button data-tab="parlays"><span class="ico" aria-hidden="true">🧩</span>Parlays</button>
       <button data-tab="board"><span class="ico" aria-hidden="true">💰</span>Live odds</button>
       <button data-tab="ratings"><span class="ico" aria-hidden="true">📊</span>Ratings</button>
@@ -63,6 +64,35 @@
       <h2 class="section">🏟️ Every game this week</h2>
       <div id="picks-week-summary"></div>
       <div id="picks" class="games"></div>
+    </section>
+
+    <!-- Sharp-book value -->
+    <section id="tab-sharp" class="tab">
+      <div id="sharp-hero"></div>
+      <div class="toolbar">
+        <label>Min edge <input id="sharp-ev" type="number" value="1" step="0.5" min="0"> %</label>
+        <label>Stake size <select id="sharp-kelly">
+          <option value="0.125">1/8 Kelly (cautious)</option>
+          <option value="0.25" selected>1/4 Kelly</option>
+          <option value="0.5">1/2 Kelly (aggressive)</option>
+        </select></label>
+        <label>Bankroll $<input id="sharp-bankroll" type="number" value="1000" step="100" min="0"></label>
+        <button id="sharp-refresh">Refresh odds</button>
+        <button class="secondary" id="books-toggle">🏦 My sportsbooks</button>
+        <span class="muted small" id="sharp-meta"></span>
+      </div>
+      <div id="books-panel" class="panel books-panel" hidden></div>
+      <div id="sharp-alert"></div>
+      <div id="sharp-list" class="bb-list"></div>
+      <div class="panel explain">
+        <h3>How this works</h3>
+        <p>Pinnacle takes the largest bets in the world at the smallest margin, so its prices with the margin removed are the
+          best available estimate of each outcome's true chance. When another sportsbook pays <b>more</b> than that fair price at
+          the <b>same line</b>, the bet has positive expected value. This doesn't depend on the app's own model.</p>
+        <p>Edges are small (usually 1–5%), so results only show up over many bets. Bet the suggested stake, track every bet,
+          and check your record after 100+. Edges over 10% are flagged <b>verify</b>: they're usually a line the book is about to move.
+          Sportsbooks may limit accounts that win consistently.</p>
+      </div>
     </section>
 
     <!-- Parlays -->

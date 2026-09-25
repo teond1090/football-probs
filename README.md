@@ -17,6 +17,7 @@ team rating histories, a walk-forward backtester and a bet tracker.
 | Tab | What it does |
 | --- | --- |
 | **Weekly picks** | Every game of the week: projected score, straight-up winner, spread pick, total pick and moneyline value, with a confidence tier (Best / Lean / Check news / Pass). Past weeks are auto-graded, and each tier's all-time and last-5-season record is shown at the top. CSV export. |
+| **Sharp value** | The money-maker: every bet where your sportsbook pays more than Pinnacle's fair (vig-free) price at the same line, with the edge, a Kelly stake and one-click tracking. Doesn't rely on the model. **My sportsbooks** limits this, best prices and parlays to books you can actually use. |
 | **Parlays** | Suggested parlays (the week's best bets combined, best value, most likely to hit) and a builder: tick legs, one per game, and see the combined chance, payout, expected value and a track-record of best-bets parlays. Uses the best price across sportsbooks for each leg when an odds key is set. |
 | **Live odds** | Pulls every US sportsbook's lines, finds the best price for each bet, and flags bets whose expected value clears your threshold, with fractional-Kelly stake sizing. |
 | **Ratings** | Power rankings with offense/defense ratings and current starting QB. Click a team for its rating-history chart, recent results against the spread, and upcoming games. |
@@ -63,6 +64,7 @@ visitors can't burn through API quotas.
 ```bash
 python cli.py picks nfl                   # this week's picks in the terminal
 python cli.py board nfl                   # live odds + value bets
+python cli.py sharp nfl --books draftkings,fanduel   # bets beating Pinnacle's fair price
 python cli.py ratings cfb --top 25
 python cli.py backtest nfl --start 2010 --min-ev 0.03
 python cli.py tune nfl --save             # re-fit model parameters to the latest data

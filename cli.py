@@ -85,6 +85,19 @@ def cmd_board(a):
                   f"model {pct(o['model_prob'])} vs mkt {pct(o['market_prob'])}  EV {pct(o['ev'])}{flag}")
 
 
+def cmd_sharp(a):
+    from app.sharp import find_value
+    allowed = set(a.books.split(",")) if a.books else None
+    r = find_value(odds_api.get_odds(a.league).get("events", []), allowed, min_ev=a.min_ev)
+    print(f"{r['games']} upcoming games, {r['games_with_sharp']} with a sharp price. "
+          f"{len(r['bets'])} bets beat the sharp fair price by {pct(a.min_ev)}+:\n")
+    for b in r["bets"]:
+        line = "" if b["line"] is None else f" {b['line']:+g}" if b["market"] == "spread" else f" {b['line']:g}"
+        flag = "  (verify - edge this big is often a stale line)" if b["verify"] else ""
+        print(f"  EV {pct(b['ev']):>6}  {b['selection']}{line} {b['price']:+d} @ {b['book']:<12} "
+              f"fair {b['fair_price']:+d} ({b['sharp']})  {b['game']}{flag}")
+
+
 def cmd_ratings(a):
     eng = build_engine(a.league, db.load_games(a.league))
     for i, r in enumerate(eng.rankings()[: a.top], 1):
@@ -155,6 +168,12 @@ def main():
     p.add_argument("league", choices=["nfl", "cfb"])
     p.add_argument("--min-ev", type=float, default=0.03)
     p.set_defaults(fn=cmd_board)
+
+    p = sub.add_parser("sharp", help="bets that beat Pinnacle's fair price")
+    p.add_argument("league", choices=["nfl", "cfb"])
+    p.add_argument("--min-ev", type=float, default=0.01)
+    p.add_argument("--books", help="only these books, e.g. draftkings,fanduel")
+    p.set_defaults(fn=cmd_sharp)
 
     p = sub.add_parser("ratings", help="current power ratings")
     p.add_argument("league", choices=["nfl", "cfb"])

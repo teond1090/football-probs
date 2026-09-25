@@ -271,6 +271,19 @@ tr.selected td { background: var(--accent-soft); font-weight: 600; }
 .res-loss { background: var(--bad); color: #fff; }
 .res-push { background: var(--bg-2); color: var(--muted); }
 
+/* ---- sharp value ---------------------------------------------------------------------------- */
+.books-panel { margin-bottom: 14px; }
+.books-panel .book-grid { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.book-opt { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--border);
+  border-radius: 999px; cursor: pointer; background: var(--bg); font-weight: 600; }
+.book-opt input { width: 16px; height: 16px; accent-color: var(--accent); }
+.book-opt.on { border-color: var(--accent); background: var(--accent-soft); }
+.edge-big { font-family: var(--display); font-size: 26px; font-weight: 800; color: var(--good); line-height: 1; }
+.sharp-src { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--bg-2); color: var(--muted); font-weight: 600; }
+.explain { margin-top: 18px; }
+.explain h3 { margin: 0 0 6px; font-family: var(--display); font-size: 20px; }
+.explain p { margin: 6px 0; color: var(--muted); font-size: 13px; }
+
 /* ---- parlays ------------------------------------------------------------------------------- */
 .parlay-hero { align-items: center; }
 .parlay-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; }
