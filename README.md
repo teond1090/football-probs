@@ -1,74 +1,105 @@
 # Football Probabilities
 
-NFL + college football win/cover/total probabilities, compared against live sportsbook prices
-to flag positive-expected-value bets. Includes a walk-forward backtester and a bet tracker.
+[![tests](https://github.com/teond1090/football-probs/actions/workflows/tests.yml/badge.svg)](https://github.com/teond1090/football-probs/actions/workflows/tests.yml)
 
-> **Reality check:** sportsbooks are good at this. At -110 you need a 52.4% hit rate just to break
-> even. Use the backtest and the bet tracker to prove an edge exists before staking real money,
-> and only bet what you can afford to lose.
+NFL and college football win, spread and total probabilities: a weekly picks page with
+confidence tiers, live sportsbook comparisons to flag positive-EV bets, a matchup calculator,
+team rating histories, a walk-forward backtester and a bet tracker.
+
+> **Reality check:** sportsbooks are very good at this. At -110 you need a 52.4% hit rate just to
+> break even, and this model's spread picks have historically landed around 51-53%. The app shows
+> every pick type's real track record right next to the picks, so you can judge for yourself.
+> This is for entertainment and research. Bet only what you can afford to lose.
+> Problem gambling help: **1-800-GAMBLER**.
+
+## Features
+
+| Tab | What it does |
+| --- | --- |
+| **Weekly picks** | Every game of the week: projected score, straight-up winner, spread pick, total pick and moneyline value, with a confidence tier (Best / Lean / Check news / Pass). Past weeks are auto-graded, and each tier's all-time and last-5-season record is shown at the top. CSV export. |
+| **Live odds** | Pulls every US sportsbook's lines, finds the best price for each bet, and flags bets whose expected value clears your threshold, with fractional-Kelly stake sizing. |
+| **Ratings** | Power rankings with offense/defense ratings and current starting QB. Click a team for its rating-history chart, recent results against the spread, and upcoming games. |
+| **Matchup** | Project any hypothetical game (home or neutral site) with fair spread/total/moneyline and alternate-line tables. Includes an odds calculator (break-even %, EV, Kelly) and a vig remover. |
+| **Backtest** | Replays history game by game against closing lines: ROI by market and season, model vs. market accuracy, and win-probability calibration. |
+| **My bets** | Log bets from the picks or odds pages, settle them, and track profit, ROI and a cumulative profit chart. |
 
 ## Setup
 
 ```bash
 python -m venv .venv
-.venv\Scripts\python -m pip install -r requirements.txt
-copy .env.example .env      # then add your API keys
+.venv\Scripts\python -m pip install -r requirements.txt     # macOS/Linux: .venv/bin/python
+copy .env.example .env                                      # optional: add API keys
+.venv\Scripts\python cli.py refresh nfl
+.venv\Scripts\python cli.py serve                           # http://localhost:8000
 ```
 
-| Key | Needed for | Get it |
+NFL data comes from [nflverse](https://github.com/nflverse/nfldata) and needs no key: schedules,
+scores, closing lines, starting QBs and rest days back to 1999. Weekly picks work out of the box.
+
+| Optional key | Unlocks | Get it (free) |
 | --- | --- | --- |
-| `ODDS_API_KEY` | Live sportsbook lines (value bets) | https://the-odds-api.com (free: 500 req/mo) |
-| `CFBD_API_KEY` | College data | https://collegefootballdata.com/key (free) |
+| `ODDS_API_KEY` | Live odds tab (line shopping across books) | https://the-odds-api.com |
+| `CFBD_API_KEY` | College football | https://collegefootballdata.com/key |
 
-NFL history comes from [nflverse](https://github.com/nflverse/nfldata) and needs no key.
+Data refreshes automatically when the server starts if it's older than 12 hours
+(`AUTO_REFRESH_HOURS`, 0 disables).
 
-## Usage
+### Command line
 
 ```bash
-.venv\Scripts\python cli.py refresh nfl          # download 1999-present games + closing lines
-.venv\Scripts\python cli.py refresh cfb          # first run: last ~10 seasons
-.venv\Scripts\python cli.py serve                # dashboard at http://localhost:8000
+python cli.py picks nfl                   # this week's picks in the terminal
+python cli.py board nfl                   # live odds + value bets
+python cli.py ratings cfb --top 25
+python cli.py backtest nfl --start 2010 --min-ev 0.03
+python cli.py tune nfl --save             # re-fit model parameters to the latest data
+python -m unittest                        # tests
 ```
 
-CLI extras: `backtest nfl --start 2010 --min-ev 0.03`, `board nfl`, `ratings cfb --top 25`.
-Run tests with `.venv\Scripts\python -m unittest`.
+## How the model works
 
-## How it works
-
-1. **Ratings** (`app/models/ratings.py`) - replays every game in date order.
-   - Elo with margin-of-victory adjustment and home-field advantage gives a **projected margin**.
-   - Offense/defense points ratings give a **projected total**.
+1. **Ratings** (`app/models/ratings.py`) replay every game in date order.
+   - **Elo** with a margin-of-victory multiplier and home-field advantage gives a projected **margin**.
+   - **Offense/defense points ratings** give a projected **total**.
    - Ratings regress toward average each offseason.
-2. **Probabilities** - actual results are roughly normal around the projections
-   (NFL SD ~13.5 pts margin / ~13.7 total), which converts projections into P(win),
-   P(cover at any spread) and P(over at any total).
-3. **Value finder** (`app/edges.py`) - for every book's moneyline, spread and total:
-   removes the vig to get the market's probability, takes the best available price (line
-   shopping), and computes EV and a fractional-Kelly stake. Edges of 10%+ get a "check news"
-   flag, because a gap that large usually means the model is missing an injury or QB change.
-4. **Backtest** (`app/backtest.py`) - bets history against closing lines using only
-   information available before each game. Also compares model and market accuracy directly.
+2. **Situational adjustments** (NFL):
+   - **Backup QB:** if a team's regular starter this season isn't starting, it loses points.
+   - **Rest:** a team with more days off gets points per extra day (bye weeks, Thursday games).
+3. **Probabilities:** actual results are roughly normal around the projection (NFL SD is about
+   13.6 points), which turns projections into P(win), P(cover) at any spread, and P(over) at any total.
+4. **Tuning** (`app/tune.py`) fits the parameters on older seasons and checks them on recent seasons
+   the tuner never saw.
+5. **Pick tiers** (`app/picks.py`) are based on how far the model's number is from the market's:
 
-## Baseline results (NFL, 2006-2025, bet when EV >= 2%)
+   | Tier | Spread | Total | Why |
+   | --- | --- | --- | --- |
+   | Best | 3-6 pts off | - | The range where the model has historically done best |
+   | Lean | 2-3 pts | 3-6 pts | Mild disagreement |
+   | Check news | 6+ pts | 6+ pts | Huge gaps usually mean the model is missing news (injury, QB change) |
+   | Pass | < 2 pts | < 3 pts | Model agrees with the line |
 
-| Market | Win % | ROI |
+   Every week's picks use only ratings from before that week's first kickoff, so historical records are honest.
+
+## Current results (NFL, graded against closing lines)
+
+| Pick type | 2002-2025 | 2021-2025 |
 | --- | --- | --- |
-| Spread | 51.0% | ~0% |
-| Total | 49.8% | -2.9% |
-| Moneyline | - | -2.9% |
+| Winner (straight up) | 64.9% | 64.2% |
+| Spread, Best tier | 51.8% | 51.6% |
+| Spread, Lean tier | 52.7% | 47.7% |
+| Totals, Lean tier | 50.2% | 49.0% |
 
-The closing line is still more accurate than this model (margin MAE 10.25 vs 10.54).
-**This is the baseline to beat.** Don't bet real money until the backtest is clearly positive.
+Closing lines are still slightly more accurate than the model (2021-2025 average margin error 10.15
+points vs. the market's 9.76). **Don't treat any tier as a money-maker until its live record says so.**
 
 ## Roadmap
 
-Ideas most likely to improve accuracy, roughly in order:
+- [ ] Opening-line data: bet early, before lines move toward the closing number
+- [ ] Closing line value (CLV) tracking for logged bets, the best early sign of a real edge
+- [ ] Injury feed beyond QBs (key skill players, offensive line)
+- [ ] Preseason priors from roster continuity and recruiting (college)
+- [ ] Player props from nflverse play-by-play
+- [ ] Scheduled odds snapshots + alerts when a value bet appears
 
-- [ ] **QB adjustment** - starting QB changes are the biggest thing Elo misses (nflverse has QB data).
-- [ ] **Blend with the market** - start from the opening line and adjust, instead of predicting from scratch.
-- [ ] **Preseason priors** - use last season's ratings + recruiting/returning production (CFBD) instead of flat regression.
-- [ ] **Rest / travel / weather / dome** features.
-- [ ] **Tune parameters** (K, HFA, regression) by minimizing backtest error.
-- [ ] **Closing line value (CLV)** tracking - record the closing line for tracked bets; beating the close is the best early signal of a real edge.
-- [ ] **Player props** (phase 2) - player usage/efficiency projections from nflverse play-by-play + Odds API player markets.
-- [ ] **Scheduled refresh** of data and odds.
+## License
+
+MIT. See [LICENSE](LICENSE).

@@ -1,4 +1,4 @@
-const state = { league: "nfl", tab: "board", board: null };
+const state = { league: "nfl", tab: "picks", board: null, picks: null, week: null };
 const $ = (sel) => document.querySelector(sel);
 
 const pct = (x, d = 1) => (x == null ? "–" : `${(x * 100).toFixed(d)}%`);
@@ -14,9 +14,17 @@ async function api(path, opts = {}) {
   return body;
 }
 
+function easternOffset(s) {
+  // Rough US DST window (mid-March to early November) is plenty for kickoff display.
+  const m = Number(s.slice(5, 7)), day = Number(s.slice(8, 10));
+  const dst = (m > 3 && m < 11) || (m === 3 && day >= 10) || (m === 11 && day < 3);
+  return dst ? "-04:00" : "-05:00";
+}
+
 function kickoff(s) {
   if (!s) return "";
-  const d = new Date(s);
+  const bare = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s);  // nflverse: Eastern time, no offset
+  const d = new Date(bare ? `${s}:00${easternOffset(s)}` : s);
   return isNaN(d) ? s : d.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
@@ -111,15 +119,18 @@ $("#value-bets").addEventListener("click", (e) => {
   const i = e.target.dataset.track;
   if (i == null) return;
   const o = state.board.value_bets[i];
-  const bankroll = Number($("#bankroll").value) || 0;
-  pendingBet = o;
-  $("#bet-desc").textContent = `${o.game}: ${o.selection} ${lineText(o)} (${o.book})`;
+  openTrack(o, o.kelly * (Number($("#bankroll").value) || 0));
+});
+
+function openTrack(bet, stake) {
+  pendingBet = bet;
+  $("#bet-desc").textContent = `${bet.game}: ${bet.selection} ${lineText(bet)}${bet.book ? ` (${bet.book})` : ""}`;
   const f = $("#bet-form");
-  f.price.value = o.price;
-  f.stake.value = (o.kelly * bankroll).toFixed(2);
+  f.price.value = bet.price;
+  f.stake.value = stake.toFixed(2);
   f.notes.value = "";
   $("#bet-dialog").showModal();
-});
+}
 
 $("#bet-dialog").addEventListener("close", async () => {
   if ($("#bet-dialog").returnValue !== "save" || !pendingBet) return;
@@ -143,6 +154,15 @@ async function loadBets() {
     ["Profit", `<span class="${cls(s.profit)}">${money(s.profit)}</span>`], ["ROI", pct(s.roi)],
     ["Expected profit", money(s.expected_profit)],
   ].map(([k, v]) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+
+  const settled = bets.filter((b) => b.result !== "pending").sort((a, b) => a.id - b.id);
+  const chart = $("#bets-chart");
+  chart.hidden = settled.length < 2;
+  if (settled.length >= 2) {
+    let run = 0;
+    const pts = settled.map((b) => ({ label: `${b.created_at.slice(0, 10)} · ${b.selection}`, y: (run += b.profit) }));
+    lineChart(chart, pts, { title: "Cumulative profit", fmt: money, baseline: 0 });
+  }
 
   $("#bets").innerHTML = bets.length ? `<div class="table-wrap"><table>
     <thead><tr><th>Date</th><th>Game</th><th>Bet</th><th class="num">Price</th><th class="num">Stake</th>
@@ -172,20 +192,62 @@ $("#bets").addEventListener("click", async (e) => {
   loadBets();
 });
 
-// ---- ratings ----------------------------------------------------------------------------------
+// ---- ratings & team detail ---------------------------------------------------------------------
 async function loadRatings() {
   $("#ratings").innerHTML = `<p class="muted">Loading…</p>`;
   try {
     const rows = await api(`/api/ratings/${state.league}`);
+    state.teams = rows.map((r) => r.team);
     $("#ratings").innerHTML = `<div class="table-wrap"><table>
-      <thead><tr><th>#</th><th>Team</th><th class="num">Elo</th><th class="num">Pts vs avg team</th>
-        <th class="num">Offense</th><th class="num">Defense</th></tr></thead>
-      <tbody>${rows.map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.team)}</td><td class="num">${r.elo}</td>
-        <td class="num ${cls(r.pts_vs_avg)}">${signed(r.pts_vs_avg)}</td>
-        <td class="num">${signed(r.off)}</td><td class="num">${signed(r.def)}</td></tr>`).join("")}</tbody></table></div>`;
+      <thead><tr><th>#</th><th>Team</th><th class="num">Elo</th><th class="num">Pts vs avg</th>
+        <th class="num">Off</th><th class="num">Def</th>${state.league === "nfl" ? "<th>QB</th>" : ""}</tr></thead>
+      <tbody>${rows.map((r, i) => `<tr class="clickable" data-team="${esc(r.team)}"><td>${i + 1}</td><td>${esc(r.team)}</td>
+        <td class="num">${r.elo}</td><td class="num">${signed(r.pts_vs_avg)}</td>
+        <td class="num">${signed(r.off)}</td><td class="num">${signed(r.def)}</td>
+        ${state.league === "nfl" ? `<td>${esc(r.qb || "")}</td>` : ""}</tr>`).join("")}</tbody></table></div>`;
   } catch (e) {
     $("#ratings").innerHTML = `<div class="alert">${esc(e.message)}</div>`;
   }
+}
+
+$("#ratings").addEventListener("click", (e) => {
+  const row = e.target.closest("tr[data-team]");
+  if (!row) return;
+  document.querySelectorAll("#ratings tr.selected").forEach((r) => r.classList.remove("selected"));
+  row.classList.add("selected");
+  loadTeam(row.dataset.team);
+});
+
+function atsResult(p, team) {
+  if (!p.completed || p.market_home_spread == null) return "";
+  const isHome = p.home === team;
+  const margin = (p.home_score - p.away_score) * (isHome ? 1 : -1);
+  const cover = margin + (isHome ? p.market_home_spread : -p.market_home_spread);
+  return cover === 0 ? "push" : cover > 0 ? "win" : "loss";
+}
+
+async function loadTeam(team) {
+  const el = $("#team-detail");
+  el.innerHTML = `<p class="muted">Loading ${esc(team)}…</p>`;
+  const t = await api(`/api/team/${state.league}/${encodeURIComponent(team)}`);
+  el.innerHTML = `<div class="chart-title">${esc(t.team)} · Elo ${t.rating.elo} (${signed(t.rating.pts_vs_avg)} pts vs average)</div>
+    <div id="team-chart"></div>
+    <h2>Recent &amp; upcoming games</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Date</th><th>Opponent</th><th>Score</th><th class="num">Line</th><th>ATS</th><th>Model pick</th></tr></thead>
+      <tbody>${t.games.slice().reverse().map((p) => {
+        const home = p.home === team, opp = home ? p.away : p.home;
+        const line = p.market_home_spread == null ? "" : signed(home ? p.market_home_spread : -p.market_home_spread);
+        const us = home ? p.home_score : p.away_score, them = home ? p.away_score : p.home_score;
+        const score = p.completed ? `${us > them ? "W" : us < them ? "L" : "T"} ${us}-${them}` : `proj ${home ? p.proj_home : p.proj_away}-${home ? p.proj_away : p.proj_home}`;
+        const ats = atsResult(p, team);
+        const sp = p.spread;
+        return `<tr><td>${esc(kickoff(p.kickoff).split(",").slice(0, 2).join(","))}</td><td>${home ? "vs" : "@"} ${esc(opp)}</td>
+          <td>${score}</td><td class="num">${line}</td><td>${ats ? `<span class="res res-${ats}">${ats.toUpperCase()}</span>` : ""}</td>
+          <td>${sp ? `${esc(sp.team)} ${signed(sp.line)} ${sp.result ? `<span class="res res-${sp.result}">${sp.result === "win" ? "✓" : sp.result === "loss" ? "✗" : "P"}</span>` : ""}` : ""}</td></tr>`;
+      }).join("")}</tbody></table></div>`;
+  lineChart($("#team-chart"), t.history.map((h) => ({ label: h.date, y: h.elo })),
+    { fmt: (v) => Math.round(v), baseline: 1500, seasonTicks: true });
 }
 
 // ---- backtest ---------------------------------------------------------------------------------
@@ -234,19 +296,234 @@ async function runBacktest() {
   }
 }
 
+// ---- weekly picks ------------------------------------------------------------------------------
+const TIER_LABEL = { best: "Best", lean: "Lean", caution: "Check news", pass: "Pass" };
+const tierBadge = (t) => `<span class="tier tier-${t}" title="${esc(TIER_TIPS[t])}">${TIER_LABEL[t]}</span>`;
+const TIER_TIPS = {
+  best: "Model differs from the line by 3-6 pts, the range where it has historically done best",
+  lean: "Small disagreement with the line; historically close to a coin flip",
+  caution: "Model disagrees with the market by 6+ pts. The market usually knows something (injury, QB news). Check before betting.",
+  pass: "Model agrees with the line; no bet",
+};
+const resBadge = (r) => (r ? `<span class="res res-${r}">${r.toUpperCase()}</span>` : "");
+const rec = (b) => (b ? `${b.wins}-${b.losses}${b.pushes ? `-${b.pushes}` : ""}` : "–");
+
+async function loadPicks(week = state.week) {
+  $("#picks-alert").innerHTML = "";
+  $("#picks").innerHTML = `<p class="muted">Loading picks…</p>`;
+  try {
+    const r = await api(`/api/picks/${state.league}${week ? `?week=${encodeURIComponent(week)}` : ""}`);
+    state.picks = r;
+    state.week = r.week.id;
+    renderPicks(r);
+  } catch (e) {
+    $("#picks").innerHTML = "";
+    $("#picks-alert").innerHTML = `<div class="alert">${esc(e.message)}</div>`;
+  }
+}
+
+function trackCard(title, all, recent) {
+  return `<div class="card"><div class="k">${title}</div>
+    <div class="v">${pct(all?.win_pct)}</div>
+    <div class="sub">${all ? `${rec(all)} all-time` : "no history"}<br>${recent ? `${pct(recent.win_pct)} last 5 seasons` : ""}</div></div>`;
+}
+
+function renderPicks(r) {
+  // selectors
+  $("#season-select").innerHTML = r.seasons.map((s) => `<option value="${s.first_week}" ${s.season === r.week.season ? "selected" : ""}>${s.season}</option>`).join("");
+  $("#week-select").innerHTML = r.weeks.map((w) => `<option value="${w.id}" ${w.id === r.week.id ? "selected" : ""}>${esc(w.label)}</option>`).join("");
+  const idx = r.weeks.findIndex((w) => w.id === r.week.id);
+  $("#week-prev").disabled = idx <= 0;
+  $("#week-next").disabled = idx >= r.weeks.length - 1;
+  $("#picks-csv").href = `/api/picks/${state.league}/csv?week=${encodeURIComponent(r.week.id)}`;
+
+  // track record (honesty first)
+  const all = r.history.all_time.record, recent = r.history.recent.record;
+  $("#picks-track").innerHTML = [
+    trackCard("Winner picks (straight up)", all.winner, recent.winner),
+    trackCard("Best spread picks", all["spread:best"], recent["spread:best"]),
+    trackCard("Lean spread picks", all["spread:lean"], recent["spread:lean"]),
+    trackCard("Total picks (lean)", all["total:lean"], recent["total:lean"]),
+  ].join("");
+  $("#picks-track-note").textContent = `Historical record of each pick type, ${r.history.all_time.from}–${r.history.all_time.to}, graded against closing lines. `
+    + "Break-even at -110 is 52.4%. Winner picks are for info, not bets: favorites pay less than even money.";
+
+  // week summary
+  const wr = r.week_record, sr = r.season_record;
+  const done = r.picks.filter((p) => p.completed).length;
+  const line = (lbl, rr) => `${lbl}: winners ${rec(rr.winner)} · best ATS ${rec(rr["spread:best"])} · lean ATS ${rec(rr["spread:lean"])} · totals ${rec(rr["total:lean"])}`;
+  $("#picks-week-summary").innerHTML = `<p class="muted small">${done ? line(`${r.week.label} results`, wr) + "<br>" : ""}${line(`${r.week.season} season to date`, sr)}</p>`;
+
+  const filter = $("#picks-filter").value;
+  const picks = r.picks.filter((p) => filter === "all" || ["best", "lean"].includes(p.best_tier));
+  $("#picks").innerHTML = picks.map(renderPick).join("") || `<p class="muted">No picks for this week${filter === "picks" ? " at best/lean confidence" : ""}.</p>`;
+}
+
+function renderPick(p) {
+  const i = state.picks.picks.indexOf(p);
+  const w = p.winner, sp = p.spread, tp = p.total, ml = p.moneyline;
+  const final = p.completed ? `<div class="final">Final: ${esc(p.away)} ${p.away_score} – ${esc(p.home)} ${p.home_score}</div>` : "";
+  const trackBtn = (m) => (!p.completed ? `<button class="secondary small" data-pick="${i}" data-market="${m}">Track</button>` : "");
+  return `<div class="game ${p.best_tier === "best" ? "tier-card-best" : ""}">
+    <div class="matchup"><span>${esc(p.away)} @ ${esc(p.home)}${p.neutral ? " (neutral)" : ""}</span><span class="muted">${kickoff(p.kickoff)}</span></div>
+    <div class="proj">Projected ${esc(p.away)} ${p.proj_away.toFixed(0)} – ${esc(p.home)} ${p.proj_home.toFixed(0)}
+      ${p.away_qb && p.home_qb ? `· QBs ${esc(p.away_qb)} / ${esc(p.home_qb)}` : ""}</div>
+    ${final}
+    <div class="pick-line"><div><div class="what">Winner: ${esc(w.team)}</div><div class="meta">${pct(w.prob, 0)} to win</div></div>
+      <div>${resBadge(w.result)}</div></div>
+    ${sp ? `<div class="pick-line"><div><div class="what">${esc(sp.team)} ${signed(sp.line)} <span class="meta">(${signed(sp.price)})</span></div>
+      <div class="meta">Spread · model is ${sp.edge_pts} pts off the line · model: covers ${pct(sp.prob, 0)}</div></div>
+      <div>${tierBadge(sp.tier)} ${resBadge(sp.result)} ${["best", "lean"].includes(sp.tier) ? trackBtn("spread") : ""}</div></div>` : ""}
+    ${tp ? `<div class="pick-line"><div><div class="what">${tp.side} ${tp.line} <span class="meta">(${signed(tp.price)})</span></div>
+      <div class="meta">Total · projected ${(p.proj_home + p.proj_away).toFixed(1)} · model: hits ${pct(tp.prob, 0)}</div></div>
+      <div>${tierBadge(tp.tier)} ${resBadge(tp.result)} ${tp.tier === "lean" ? trackBtn("total") : ""}</div></div>` : ""}
+    ${ml ? `<div class="pick-line"><div><div class="what">${esc(ml.team)} ML ${signed(ml.price)}</div>
+      <div class="meta">Moneyline value · model ${pct(ml.prob, 0)} · EV ${pct(ml.ev)}</div></div><div>${resBadge(ml.result)}</div></div>` : ""}
+    ${p.notes.length ? `<div class="notes">${p.notes.map(esc).join("<br>")}</div>` : ""}
+  </div>`;
+}
+
+$("#picks").addEventListener("click", (e) => {
+  const i = e.target.dataset.pick;
+  if (i == null) return;
+  const p = state.picks.picks[i];
+  const m = e.target.dataset.market;
+  const bankroll = Number($("#bankroll").value) || 0;
+  const x = p[m];
+  openTrack({
+    game: `${p.away} @ ${p.home}`, market: m,
+    selection: m === "spread" ? x.team : x.side, line: x.line, price: x.price,
+    model_prob: x.prob, book: null,
+  }, bankroll * 0.01);
+});
+
+$("#week-select").addEventListener("change", (e) => loadPicks(e.target.value));
+$("#season-select").addEventListener("change", (e) => loadPicks(e.target.value));
+$("#picks-filter").addEventListener("change", () => state.picks && renderPicks(state.picks));
+for (const [id, step] of [["#week-prev", -1], ["#week-next", 1]]) {
+  $(id).addEventListener("click", () => {
+    const weeks = state.picks.weeks;
+    const idx = weeks.findIndex((w) => w.id === state.week) + step;
+    if (weeks[idx]) loadPicks(weeks[idx].id);
+  });
+}
+
+// ---- matchup calculator -----------------------------------------------------------------------
+async function loadMatchupTeams() {
+  if (!state.teams) state.teams = (await api(`/api/ratings/${state.league}`)).map((r) => r.team);
+  const sorted = [...state.teams].sort();
+  const opts = (sel) => sorted.map((t) => `<option ${t === sel ? "selected" : ""}>${esc(t)}</option>`).join("");
+  const cur = { away: $("#mu-away").value, home: $("#mu-home").value };
+  $("#mu-away").innerHTML = opts(sorted.includes(cur.away) ? cur.away : state.teams[1]);
+  $("#mu-home").innerHTML = opts(sorted.includes(cur.home) ? cur.home : state.teams[0]);
+}
+
+async function runMatchup() {
+  const home = $("#mu-home").value, away = $("#mu-away").value;
+  if (home === away) {
+    $("#matchup").innerHTML = `<div class="alert">Pick two different teams.</div>`;
+    return;
+  }
+  try {
+    const m = await api(`/api/matchup/${state.league}?home=${encodeURIComponent(home)}&away=${encodeURIComponent(away)}&neutral=${$("#mu-neutral").checked}`);
+    const p = m.prediction;
+    $("#matchup").innerHTML = `
+      <div class="cards">
+        <div class="card"><div class="k">Projected score</div><div class="v">${p.away_score.toFixed(0)}–${p.home_score.toFixed(0)}</div><div class="sub">${esc(away)} – ${esc(home)}</div></div>
+        <div class="card"><div class="k">${esc(home)} win chance</div><div class="v">${pct(p.home_win_prob)}</div><div class="sub">fair ML ${signed(p.fair_home_ml)} / ${signed(p.fair_away_ml)}</div></div>
+        <div class="card"><div class="k">Fair spread</div><div class="v">${esc(home)} ${signed(p.fair_home_spread) || "PK"}</div><div class="sub">projected margin ${signed(p.home_margin)}</div></div>
+        <div class="card"><div class="k">Fair total</div><div class="v">${p.total}</div><div class="sub">combined points</div></div>
+      </div>
+      <p class="muted small">Compare any sportsbook line to these tables: if the book's price is better than the fair price, the model sees value.</p>
+      <div class="two-col">
+        <div class="table-wrap"><table><thead><tr><th>${esc(home)} spread</th><th class="num">${esc(home)} covers</th><th class="num">Fair price</th></tr></thead>
+          <tbody>${m.alt_spreads.map((s) => `<tr><td>${signed(s.home_spread) || "PK"}</td><td class="num">${pct(s.home_cover)}</td><td class="num">${signed(s.fair_price)}</td></tr>`).join("")}</tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>Total</th><th class="num">Over hits</th><th class="num">Fair over price</th></tr></thead>
+          <tbody>${m.alt_totals.map((t) => `<tr><td>${t.line}</td><td class="num">${pct(t.over)}</td><td class="num">${signed(t.fair_price)}</td></tr>`).join("")}</tbody></table></div>
+      </div>`;
+  } catch (e) {
+    $("#matchup").innerHTML = `<div class="alert">${esc(e.message)}</div>`;
+  }
+}
+$("#mu-run").addEventListener("click", runMatchup);
+
+// ---- odds calculator (client-side) ------------------------------------------------------------
+const toDecimal = (o) => (o > 0 ? 1 + o / 100 : 1 + 100 / Math.abs(o));
+const implied = (o) => (o > 0 ? 100 / (o + 100) : -o / (-o + 100));
+function updateCalc() {
+  const price = Number($("#calc-price").value), p = Number($("#calc-prob").value) / 100;
+  if (price && Math.abs(price) >= 100 && p > 0 && p < 1) {
+    const b = toDecimal(price) - 1, ev = p * b - (1 - p), kelly = Math.max(0, (b * p - (1 - p)) / b);
+    $("#calc-out").innerHTML = `Break-even ${pct(implied(price))} · EV <span class="${cls(ev)}">${ev >= 0 ? "+" : ""}${money(ev * 100)}</span> per $100 · quarter-Kelly stake ${pct(kelly / 4)} of bankroll`;
+  } else $("#calc-out").textContent = "Enter American odds (e.g. -110 or +150) and a probability.";
+  const a = Number($("#calc-a").value), bb = Number($("#calc-b").value);
+  if (Math.abs(a) >= 100 && Math.abs(bb) >= 100) {
+    const ia = implied(a), ib = implied(bb), hold = ia + ib - 1;
+    $("#devig-out").textContent = `No-vig: A ${pct(ia / (ia + ib))} · B ${pct(ib / (ia + ib))} · book's margin ${pct(hold)}`;
+  }
+}
+["#calc-price", "#calc-prob", "#calc-a", "#calc-b"].forEach((id) => $(id).addEventListener("input", updateCalc));
+updateCalc();
+
+// ---- line chart (single series, hover crosshair) ----------------------------------------------
+function lineChart(el, pts, { title = "", fmt = (v) => v, baseline = null, seasonTicks = false } = {}) {
+  if (!pts.length) { el.innerHTML = `<p class="muted">No history yet.</p>`; return; }
+  const W = 600, H = 220, L = 48, R = 12, T = 10, B = 24;
+  const ys = pts.map((p) => p.y).concat(baseline == null ? [] : [baseline]);
+  let lo = Math.min(...ys), hi = Math.max(...ys);
+  const pad = (hi - lo || 1) * 0.08; lo -= pad; hi += pad;
+  const x = (i) => L + (pts.length === 1 ? 0 : (i * (W - L - R)) / (pts.length - 1));
+  const y = (v) => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+  const ticks = [0, 1, 2, 3].map((k) => lo + ((hi - lo) * k) / 3);
+  const xticks = seasonTicks
+    ? pts.map((p, i) => [i, p.label.slice(0, 4)]).filter(([i, yr]) => i === 0 || pts[i - 1].label.slice(0, 4) !== yr)
+    : [[0, "first"], [pts.length - 1, "latest"]];
+  const d = pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.y).toFixed(1)}`).join("");
+  el.innerHTML = `${title ? `<div class="chart-title">${esc(title)}</div>` : ""}<div class="chart">
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title || "rating history")}">
+      ${ticks.map((t) => `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}"/><text class="axis" x="${L - 6}" y="${y(t) + 4}" text-anchor="end">${fmt(t)}</text>`).join("")}
+      ${baseline != null ? `<line class="baseline" x1="${L}" x2="${W - R}" y1="${y(baseline)}" y2="${y(baseline)}"/>` : ""}
+      ${xticks.map(([i, lbl]) => `<text class="axis" x="${x(i)}" y="${H - 6}" text-anchor="${i === pts.length - 1 && !seasonTicks ? "end" : "start"}">${esc(lbl)}</text>`).join("")}
+      <path class="line" d="${d}"/>
+      <line class="cross" y1="${T}" y2="${H - B}" visibility="hidden"/>
+      <circle class="dot" r="4" visibility="hidden"/>
+      <rect x="${L}" y="0" width="${W - L - R}" height="${H}" fill="transparent"/>
+    </svg></div>`;
+  const svg = el.querySelector("svg"), cross = svg.querySelector(".cross"), dot = svg.querySelector(".dot"), tip = $("#chart-tip");
+  svg.addEventListener("mousemove", (e) => {
+    const r = svg.getBoundingClientRect();
+    const vx = ((e.clientX - r.left) / r.width) * W;
+    const i = Math.max(0, Math.min(pts.length - 1, Math.round(((vx - L) / (W - L - R)) * (pts.length - 1))));
+    cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.setAttribute("visibility", "visible");
+    dot.setAttribute("cx", x(i)); dot.setAttribute("cy", y(pts[i].y)); dot.setAttribute("visibility", "visible");
+    tip.hidden = false;
+    tip.textContent = `${pts[i].label}: ${fmt(pts[i].y)}`;
+    tip.style.left = `${Math.min(e.clientX + 12, window.innerWidth - tip.offsetWidth - 8)}px`;
+    tip.style.top = `${e.clientY - 32}px`;
+  });
+  svg.addEventListener("mouseleave", () => {
+    cross.setAttribute("visibility", "hidden"); dot.setAttribute("visibility", "hidden"); tip.hidden = true;
+  });
+}
+
 // ---- navigation -------------------------------------------------------------------------------
 function show(tab) {
   state.tab = tab;
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   document.querySelectorAll(".tab").forEach((s) => s.classList.toggle("active", s.id === `tab-${tab}`));
+  if (tab === "picks") loadPicks();
   if (tab === "board") loadBoard();
   if (tab === "ratings") loadRatings();
+  if (tab === "matchup") loadMatchupTeams().then(runMatchup);
   if (tab === "bets") loadBets();
 }
 
 document.querySelectorAll("nav button").forEach((b) => b.addEventListener("click", () => show(b.dataset.tab)));
 document.querySelectorAll(".league-toggle button").forEach((b) => b.addEventListener("click", () => {
   state.league = b.dataset.league;
+  state.week = null;
+  state.teams = null;
+  $("#team-detail").innerHTML = `<p class="muted">Click a team to see its rating history and recent games.</p>`;
   document.querySelectorAll(".league-toggle button").forEach((x) => x.classList.toggle("active", x === b));
   $("#backtest").innerHTML = "";
   loadStatus();
@@ -275,4 +552,4 @@ $("#refresh-data").addEventListener("click", async (e) => {
 });
 
 loadStatus();
-loadBoard();
+show("picks");

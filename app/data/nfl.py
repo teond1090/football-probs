@@ -43,6 +43,12 @@ def parse_row(r: dict) -> dict:
         "away_spread_odds": _num(r.get("away_spread_odds"), int),
         "over_odds": _num(r.get("over_odds"), int),
         "under_odds": _num(r.get("under_odds"), int),
+        "home_qb": r.get("home_qb_name") or None,
+        "away_qb": r.get("away_qb_name") or None,
+        "home_rest": _num(r.get("home_rest"), int),
+        "away_rest": _num(r.get("away_rest"), int),
+        "roof": r.get("roof") or None,
+        "div_game": _num(r.get("div_game"), int),
     }
 
 

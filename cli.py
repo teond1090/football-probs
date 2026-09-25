@@ -5,6 +5,8 @@
     python cli.py backtest nfl --start 2010 --min-ev 0.03
     python cli.py board nfl
     python cli.py ratings cfb
+    python cli.py picks nfl
+    python cli.py tune nfl --save
     python cli.py serve
 """
 import argparse
@@ -15,7 +17,9 @@ from app.backtest import run_backtest
 from app.data import odds_api
 from app.edges import build_board
 from app.main import refresh_league
-from app.models.ratings import build_engine
+from app.models.ratings import PARAMS, build_engine, save_params
+from app.picks import compute_all_picks
+from app.tune import evaluate, tune
 
 
 def _seasons(spec: str | None) -> list[int] | None:
@@ -84,6 +88,45 @@ def cmd_ratings(a):
         print(f"{i:>3}. {r['team']:<24} Elo {r['elo']}  ({r['pts_vs_avg']:+} pts vs avg)")
 
 
+def cmd_picks(a):
+    games = db.load_games(a.league)
+    all_picks, starts, _ = compute_all_picks(a.league, games)
+    keys = sorted(all_picks, key=lambda k: (starts[k], k))
+    latest = max(k[0] for k in keys)
+    key = next((k for k in keys if k[0] == latest and any(not p["completed"] for p in all_picks[k])), keys[-1])
+    print(f"{a.league.upper()} {key[0]} {key[1]} week {key[2]}\n")
+    order = {"best": 0, "lean": 1, "caution": 2, "pass": 3}
+    for p in sorted(all_picks[key], key=lambda p: order[p["best_tier"]]):
+        sp, tp = p.get("spread"), p.get("total")
+        parts = [f"{p['away']:>16} @ {p['home']:<16} winner {p['winner']['team']} ({pct(p['winner']['prob'])})"]
+        if sp:
+            parts.append(f"ATS {sp['team']} {sp['line']:+g} [{sp['tier']}]")
+        if tp:
+            parts.append(f"{tp['side']} {tp['line']:g} [{tp['tier']}]")
+        print("  ".join(parts))
+        for n in p["notes"]:
+            print(f"{'':>20}note: {n}")
+
+
+def cmd_tune(a):
+    games = db.load_games(a.league)
+    seasons = sorted({g["season"] for g in games if g["home_score"] is not None})
+    train = (seasons[0] + 3, seasons[-1] - a.holdout)
+    test = (seasons[-1] - a.holdout + 1, seasons[-1])
+    print(f"Tuning {a.league.upper()} on {train[0]}-{train[1]}, checking on {test[0]}-{test[1]}...")
+    before = PARAMS[a.league]
+    after = tune(games, before, train)
+    for name, p in (("current", before), ("tuned", after)):
+        r = evaluate(games, p, *test)
+        print(f"  {name:<8} margin MAE {r['margin_mae']:.3f}  total MAE {r['total_mae']:.3f}  "
+              f"(market {r['market_margin_mae']:.3f} / {r['market_total_mae']:.3f})")
+    if a.save:
+        save_params(after)
+        print("Saved - restart the server to use the new parameters.")
+    else:
+        print("Run again with --save to use these parameters.")
+
+
 def cmd_serve(a):
     import uvicorn
     uvicorn.run("app.main:app", host="127.0.0.1", port=a.port, reload=a.reload)
@@ -114,6 +157,16 @@ def main():
     p.add_argument("league", choices=["nfl", "cfb"])
     p.add_argument("--top", type=int, default=32)
     p.set_defaults(fn=cmd_ratings)
+
+    p = sub.add_parser("picks", help="this week's picks with confidence tiers")
+    p.add_argument("league", choices=["nfl", "cfb"])
+    p.set_defaults(fn=cmd_picks)
+
+    p = sub.add_parser("tune", help="fit model parameters to your data")
+    p.add_argument("league", choices=["nfl", "cfb"])
+    p.add_argument("--holdout", type=int, default=5, help="recent seasons held out for checking")
+    p.add_argument("--save", action="store_true")
+    p.set_defaults(fn=cmd_tune)
 
     p = sub.add_parser("serve", help="run the web dashboard")
     p.add_argument("--port", type=int, default=8000)

@@ -14,8 +14,10 @@
       <button data-league="cfb">College</button>
     </div>
     <nav>
-      <button data-tab="board" class="active">This week</button>
+      <button data-tab="picks" class="active">Weekly picks</button>
+      <button data-tab="board">Live odds</button>
       <button data-tab="ratings">Ratings</button>
+      <button data-tab="matchup">Matchup</button>
       <button data-tab="backtest">Backtest</button>
       <button data-tab="bets">My bets</button>
     </nav>
@@ -23,7 +25,28 @@
   </header>
 
   <main>
-    <section id="tab-board" class="tab active">
+    <!-- Weekly picks -->
+    <section id="tab-picks" class="tab active">
+      <div class="toolbar">
+        <button class="secondary" id="week-prev" aria-label="Previous week">‹</button>
+        <select id="season-select" aria-label="Season"></select>
+        <select id="week-select" aria-label="Week"></select>
+        <button class="secondary" id="week-next" aria-label="Next week">›</button>
+        <label>Show <select id="picks-filter">
+          <option value="all">All games</option>
+          <option value="picks">Best &amp; lean only</option>
+        </select></label>
+        <a id="picks-csv" class="button secondary" href="#" download>Download CSV</a>
+      </div>
+      <div id="picks-alert"></div>
+      <div id="picks-track" class="cards"></div>
+      <p class="muted small" id="picks-track-note"></p>
+      <div id="picks-week-summary"></div>
+      <div id="picks" class="games"></div>
+    </section>
+
+    <!-- Live odds board -->
+    <section id="tab-board" class="tab">
       <div class="toolbar">
         <label>Min EV <input id="min-ev" type="number" value="3" step="0.5" min="0"> %</label>
         <label>Kelly <select id="kelly">
@@ -43,10 +66,41 @@
       <div id="games" class="games"></div>
     </section>
 
+    <!-- Ratings -->
     <section id="tab-ratings" class="tab">
-      <div id="ratings"></div>
+      <div class="split">
+        <div id="ratings"></div>
+        <aside id="team-detail" class="panel"><p class="muted">Click a team to see its rating history and recent games.</p></aside>
+      </div>
     </section>
 
+    <!-- Matchup calculator -->
+    <section id="tab-matchup" class="tab">
+      <div class="toolbar">
+        <label>Away <select id="mu-away"></select></label>
+        <span class="muted">@</span>
+        <label>Home <select id="mu-home"></select></label>
+        <label><input type="checkbox" id="mu-neutral" style="width:auto"> Neutral site</label>
+        <button id="mu-run">Project</button>
+      </div>
+      <div id="matchup"></div>
+
+      <h2>Odds calculator</h2>
+      <div class="calc panel">
+        <div class="calc-row">
+          <label>Price <input id="calc-price" type="number" value="-110"></label>
+          <label>Your win % <input id="calc-prob" type="number" value="55" step="0.5"></label>
+          <div id="calc-out" class="muted"></div>
+        </div>
+        <div class="calc-row">
+          <label>Side A price <input id="calc-a" type="number" value="-150"></label>
+          <label>Side B price <input id="calc-b" type="number" value="+130"></label>
+          <div id="devig-out" class="muted"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Backtest -->
     <section id="tab-backtest" class="tab">
       <div class="toolbar">
         <label>From season <input id="bt-start" type="number" placeholder="auto"></label>
@@ -58,10 +112,17 @@
       <div id="backtest"></div>
     </section>
 
+    <!-- Bet tracker -->
     <section id="tab-bets" class="tab">
       <div id="bets-summary" class="cards"></div>
+      <div id="bets-chart" class="panel chart-panel" hidden></div>
       <div id="bets"></div>
     </section>
+
+    <footer class="muted small">
+      For entertainment and research. Past results don't guarantee future results. Sportsbooks keep a margin on every bet.
+      Bet only what you can afford to lose. Problem gambling help: 1-800-GAMBLER.
+    </footer>
   </main>
 
   <dialog id="bet-dialog">
@@ -78,6 +139,7 @@
     </form>
   </dialog>
 
+  <div id="chart-tip" class="chart-tip" hidden></div>
   <script src="/static/app.js"></script>
 </body>
 </html>

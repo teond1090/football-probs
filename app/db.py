@@ -27,6 +27,12 @@ CREATE TABLE IF NOT EXISTS games (
     away_spread_odds INTEGER,
     over_odds        INTEGER,
     under_odds       INTEGER,
+    home_qb          TEXT,                   -- starting quarterbacks (nfl)
+    away_qb          TEXT,
+    home_rest        INTEGER,                -- days since previous game (nfl)
+    away_rest        INTEGER,
+    roof             TEXT,
+    div_game         INTEGER,
     PRIMARY KEY (league, game_id)
 );
 CREATE INDEX IF NOT EXISTS idx_games_date ON games (league, game_date);
@@ -64,8 +70,14 @@ GAME_COLUMNS = [
     "league", "game_id", "season", "week", "season_type", "game_date", "home", "away",
     "home_score", "away_score", "neutral", "home_div", "away_div", "home_spread",
     "total_line", "home_ml", "away_ml", "home_spread_odds", "away_spread_odds",
-    "over_odds", "under_odds",
+    "over_odds", "under_odds", "home_qb", "away_qb", "home_rest", "away_rest", "roof", "div_game",
 ]
+
+# Columns added after the first release; older databases get them via ALTER TABLE.
+MIGRATIONS = {
+    "home_qb": "TEXT", "away_qb": "TEXT", "home_rest": "INTEGER", "away_rest": "INTEGER",
+    "roof": "TEXT", "div_game": "INTEGER",
+}
 
 
 @contextmanager
@@ -75,10 +87,18 @@ def connect():
     conn.row_factory = sqlite3.Row
     try:
         conn.executescript(SCHEMA)
+        _migrate(conn)
         yield conn
         conn.commit()
     finally:
         conn.close()
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    existing = {r["name"] for r in conn.execute("PRAGMA table_info(games)")}
+    for col, typ in MIGRATIONS.items():
+        if col not in existing:
+            conn.execute(f"ALTER TABLE games ADD COLUMN {col} {typ}")
 
 
 def upsert_games(rows: list[dict]) -> int:

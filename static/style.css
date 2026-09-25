@@ -103,3 +103,61 @@ dialog .actions { display: flex; justify-content: flex-end; gap: 8px; }
   .status { margin-left: 0; width: 100%; }
   .games { grid-template-columns: 1fr; }
 }
+
+/* ---- v2 additions ---------------------------------------------------------------------- */
+.small { font-size: 12px; }
+a.button {
+  display: inline-block; text-decoration: none; font: inherit; border-radius: 6px; padding: 6px 12px;
+  border: 1px solid var(--border); color: var(--text);
+}
+select { width: auto; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+footer { margin-top: 40px; text-align: center; }
+
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.split .panel { position: sticky; top: 70px; }
+@media (max-width: 900px) { .split { grid-template-columns: 1fr; } .split .panel { position: static; } }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover td { background: var(--bg); }
+tr.selected td { background: var(--bg); font-weight: 600; }
+
+/* tier badges: always text + color, never color alone */
+.tier { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; border: 1px solid transparent; }
+.tier-best { background: var(--good-bg); color: var(--good); border-color: var(--good); }
+.tier-lean { background: var(--bg); color: var(--text); border-color: var(--border); }
+.tier-caution { background: var(--warn-bg); color: var(--warn); }
+.tier-pass { color: var(--muted); }
+.res { font-weight: 700; font-size: 12px; }
+.res-win { color: var(--good); }
+.res-loss { color: var(--bad); }
+.res-push { color: var(--muted); }
+
+.pick-line { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 5px 0; border-top: 1px solid var(--border); }
+.pick-line .what { font-weight: 600; }
+.pick-line .meta { color: var(--muted); font-size: 12px; }
+.game.tier-card-best { border-color: var(--good); }
+.notes { font-size: 12px; color: var(--warn); margin-top: 6px; }
+.final { font-size: 12px; color: var(--muted); }
+
+.card .sub { font-size: 12px; color: var(--muted); }
+
+.calc-row { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; padding: 6px 0; }
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 640px) { .two-col { grid-template-columns: 1fr; } }
+
+/* charts */
+.chart-panel { margin-bottom: 14px; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart .grid { stroke: var(--border); stroke-width: 1; }
+.chart .baseline { stroke: var(--muted); stroke-width: 1; }
+.chart .axis { fill: var(--muted); font-size: 11px; }
+.chart .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart .cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.chart .dot { fill: var(--accent); stroke: var(--panel); stroke-width: 2; }
+.chart-title { font-weight: 600; margin-bottom: 6px; }
+.chart-tip {
+  position: fixed; pointer-events: none; z-index: 20; background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.15); font-variant-numeric: tabular-nums;
+}
+@media (max-width: 640px) { header { position: static; } }

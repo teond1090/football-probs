@@ -1,22 +1,54 @@
-from datetime import datetime
+import csv
+import io
+import logging
+import threading
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import db, odds_math
 from .backtest import run_backtest
-from .config import CFBD_API_KEY, ODDS_API_KEY, ROOT, current_season
+from .config import AUTO_REFRESH_HOURS, CFBD_API_KEY, ODDS_API_KEY, ROOT, current_season
 from .data import cfb, nfl, odds_api
 from .edges import build_board
 from .models.ratings import RatingEngine, build_engine
+from .picks import TIER_ORDER, compute_all_picks, record, week_label
 
 LEAGUES = ("nfl", "cfb")
-app = FastAPI(title="Football Probabilities")
-app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
+log = logging.getLogger("football")
 
 _engines: dict[str, RatingEngine] = {}
+_picks: dict[str, tuple] = {}
+
+
+def _auto_refresh() -> None:
+    """Refresh any league whose data is older than AUTO_REFRESH_HOURS."""
+    for league in LEAGUES:
+        if league == "cfb" and not CFBD_API_KEY:
+            continue
+        last = db.get_meta(f"{league}_refreshed_at")
+        stale = last is None or datetime.now() - datetime.fromisoformat(last) > timedelta(hours=AUTO_REFRESH_HOURS)
+        if stale:
+            try:
+                n = refresh_league(league)
+                log.warning("auto-refreshed %s: %d games", league, n)
+            except Exception as e:  # never block startup on a data source hiccup
+                log.warning("auto-refresh of %s failed: %s", league, e)
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    if AUTO_REFRESH_HOURS > 0:
+        threading.Thread(target=_auto_refresh, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="Football Probabilities", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
 def _league(league: str) -> str:
@@ -27,8 +59,15 @@ def _league(league: str) -> str:
 
 def get_engine(league: str) -> RatingEngine:
     if league not in _engines:
-        _engines[league] = build_engine(league, db.load_games(league))
+        _engines[league] = build_engine(league, db.load_games(league), track_history=True)
     return _engines[league]
+
+
+def get_picks(league: str) -> tuple[dict, dict]:
+    if league not in _picks:
+        all_picks, starts, _ = compute_all_picks(league, db.load_games(league))
+        _picks[league] = (all_picks, starts)
+    return _picks[league]
 
 
 def refresh_league(league: str, seasons: list[int] | None = None) -> int:
@@ -43,6 +82,7 @@ def refresh_league(league: str, seasons: list[int] | None = None) -> int:
         n = cfb.refresh(seasons)
     db.set_meta(f"{league}_refreshed_at", datetime.now().isoformat(timespec="seconds"))
     _engines.pop(league, None)
+    _picks.pop(league, None)
     return n
 
 
@@ -108,6 +148,139 @@ def backtest(league: str, start: int | None = None, min_ev: float = 0.02):
     first = min(g["season"] for g in games)
     start = start or first + 3   # give ratings a few seasons to settle
     return run_backtest(league, games, start, min_ev)
+
+
+# --- Weekly picks -------------------------------------------------------------------------------
+
+def _key_id(key: tuple) -> str:
+    return f"{key[0]}-{key[1]}-{key[2]}"
+
+
+def _ordered(keys, starts: dict) -> list[tuple]:
+    return sorted(keys, key=lambda k: (starts[k], k))
+
+
+def _default_week(all_picks: dict, starts: dict) -> tuple:
+    """The first week of the latest season that still has games to play."""
+    keys = _ordered(all_picks, starts)
+    latest = max(k[0] for k in keys)
+    for k in keys:
+        if k[0] == latest and any(not p["completed"] for p in all_picks[k]):
+            return k
+    return keys[-1]
+
+
+def _select_week(league: str, week: str | None) -> tuple[dict, dict, tuple]:
+    if not db.load_games(league):
+        raise HTTPException(400, f"No {league.upper()} data yet - click Refresh data first.")
+    all_picks, starts = get_picks(league)
+    if week:
+        key = next((k for k in all_picks if _key_id(k) == week), None)
+        if key is None:
+            raise HTTPException(404, f"Unknown week '{week}'")
+    else:
+        key = _default_week(all_picks, starts)
+    return all_picks, starts, key
+
+
+def _sorted_picks(picks: list[dict]) -> list[dict]:
+    return sorted(picks, key=lambda p: (TIER_ORDER[p["best_tier"]], -p["confidence"]))
+
+
+@app.get("/api/picks/{league}")
+def weekly_picks(league: str, week: str | None = None):
+    all_picks, starts, key = _select_week(_league(league), week)
+    season = key[0]
+    seasons = sorted({k[0] for k in all_picks}, reverse=True)
+    season_keys = _ordered((k for k in all_picks if k[0] == season), starts)
+    first = min(seasons)
+    recent_from = season - 5
+
+    def history(lo: int) -> dict:
+        return {"from": lo, "to": season - 1, "record": record(
+            [p for k, ps in all_picks.items() if lo <= k[0] < season for p in ps])}
+
+    return {
+        "league": league,
+        "week": {"id": _key_id(key), "label": week_label(key), "season": season, "start": starts[key]},
+        "weeks": [{"id": _key_id(k), "label": week_label(k), "start": starts[k]} for k in season_keys],
+        "seasons": [
+            {"season": s, "first_week": _key_id(_ordered((k for k in all_picks if k[0] == s), starts)[0])}
+            for s in seasons
+        ],
+        "picks": _sorted_picks(all_picks[key]),
+        "week_record": record(all_picks[key]),
+        "season_record": record([p for k in season_keys for p in all_picks[k]]),
+        "history": {"all_time": history(first + 3), "recent": history(recent_from)},
+    }
+
+
+@app.get("/api/picks/{league}/csv")
+def weekly_picks_csv(league: str, week: str | None = None):
+    all_picks, _, key = _select_week(_league(league), week)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["kickoff", "away", "home", "proj_away", "proj_home", "winner", "win_prob",
+                "spread_pick", "spread_prob", "spread_tier", "spread_result",
+                "total_pick", "total_prob", "total_tier", "total_result", "notes"])
+    for p in _sorted_picks(all_picks[key]):
+        sp, tp = p.get("spread"), p.get("total")
+        w.writerow([
+            p["kickoff"], p["away"], p["home"], p["proj_away"], p["proj_home"],
+            p["winner"]["team"], p["winner"]["prob"],
+            f"{sp['team']} {sp['line']:+g}" if sp else "", sp["prob"] if sp else "",
+            sp["tier"] if sp else "", (sp or {}).get("result") or "",
+            f"{tp['side']} {tp['line']:g}" if tp else "", tp["prob"] if tp else "",
+            tp["tier"] if tp else "", (tp or {}).get("result") or "",
+            "; ".join(p["notes"]),
+        ])
+    name = f"{league}-picks-{_key_id(key)}.csv"
+    return Response(buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+# --- Matchup calculator & team pages ------------------------------------------------------------
+
+@app.get("/api/matchup/{league}")
+def matchup(league: str, home: str, away: str, neutral: bool = False):
+    eng = get_engine(_league(league))
+    for t in (home, away):
+        if t not in eng.elo:
+            raise HTTPException(404, f"Unknown team '{t}'")
+    pred = eng.predict({"home": home, "away": away, "season": current_season(), "neutral": int(neutral)})
+    fair = round(-pred.home_margin * 2) / 2
+    total = round(pred.total * 2) / 2
+    return {
+        "home": home, "away": away, "neutral": neutral,
+        "prediction": pred.as_dict(),
+        "alt_spreads": [
+            {"home_spread": s, "home_cover": round(pred.home_cover_prob(s), 4),
+             "fair_price": odds_math.prob_to_american(pred.home_cover_prob(s))}
+            for s in (fair + d for d in range(-10, 11))
+        ],
+        "alt_totals": [
+            {"line": t, "over": round(pred.over_prob(t), 4),
+             "fair_price": odds_math.prob_to_american(pred.over_prob(t))}
+            for t in (total + d for d in range(-8, 9))
+        ],
+    }
+
+
+@app.get("/api/team/{league}/{team}")
+def team_detail(league: str, team: str):
+    eng = get_engine(_league(league))
+    if team not in eng.elo:
+        raise HTTPException(404, f"Unknown team '{team}'")
+    all_picks, starts = get_picks(league)
+    season = max(k[0] for k in all_picks)
+    games = [p for k in _ordered(all_picks, starts) if k[0] >= season - 1
+             for p in all_picks[k] if team in (p["home"], p["away"])]
+    return {
+        "team": team,
+        "rating": next(r for r in eng.rankings() if r["team"] == team),
+        "history": [{"date": d, "elo": e} for d, e in eng.history.get(team, []) if d >= str(season - 3)],
+        "games": [p for p in games if p["completed"]][-12:] + [p for p in games if not p["completed"]][:3],
+    }
 
 
 # --- Bet tracker --------------------------------------------------------------------------------

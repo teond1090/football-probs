@@ -29,6 +29,8 @@ CFBD_API_KEY = os.getenv("CFBD_API_KEY", "")
 
 # How long to reuse a live-odds response before spending another API request.
 ODDS_CACHE_MINUTES = int(os.getenv("ODDS_CACHE_MINUTES", "15"))
+# Re-download schedules/scores/lines on server start when older than this (0 = never).
+AUTO_REFRESH_HOURS = float(os.getenv("AUTO_REFRESH_HOURS", "12"))
 
 
 def current_season(today: date | None = None) -> int:
