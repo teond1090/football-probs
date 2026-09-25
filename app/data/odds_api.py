@@ -1,6 +1,7 @@
 """Live sportsbook lines from The Odds API (https://the-odds-api.com).
 
-Each fetch of one league costs 3 credits (moneyline + spreads + totals, US books).
+Each fetch of one league costs 3 credits per region (moneyline + spreads + totals).
+ODDS_REGIONS=us,us2 adds more US sportsbooks for better line shopping at twice the credits.
 Responses are cached in SQLite so refreshing the dashboard doesn't burn the free quota.
 """
 import json
@@ -9,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 from .. import db
-from ..config import ODDS_API_KEY, ODDS_CACHE_MINUTES, ODDS_FORCE_COOLDOWN_MINUTES
+from ..config import ODDS_API_KEY, ODDS_CACHE_MINUTES, ODDS_FORCE_COOLDOWN_MINUTES, ODDS_REGIONS
 
 SPORT_KEYS = {"nfl": "americanfootball_nfl", "cfb": "americanfootball_ncaaf"}
 URL = "https://api.the-odds-api.com/v4/sports/{sport}/odds"
@@ -35,7 +36,7 @@ def get_odds(league: str, force: bool = False) -> dict:
         URL.format(sport=SPORT_KEYS[league]),
         params={
             "apiKey": ODDS_API_KEY,
-            "regions": "us",
+            "regions": ODDS_REGIONS,
             "markets": "h2h,spreads,totals",
             "oddsFormat": "american",
         },

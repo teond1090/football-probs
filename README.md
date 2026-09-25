@@ -17,6 +17,7 @@ team rating histories, a walk-forward backtester and a bet tracker.
 | Tab | What it does |
 | --- | --- |
 | **Weekly picks** | Every game of the week: projected score, straight-up winner, spread pick, total pick and moneyline value, with a confidence tier (Best / Lean / Check news / Pass). Past weeks are auto-graded, and each tier's all-time and last-5-season record is shown at the top. CSV export. |
+| **Parlays** | Suggested parlays (the week's best bets combined, best value, most likely to hit) and a builder: tick legs, one per game, and see the combined chance, payout, expected value and a track-record of best-bets parlays. Uses the best price across sportsbooks for each leg when an odds key is set. |
 | **Live odds** | Pulls every US sportsbook's lines, finds the best price for each bet, and flags bets whose expected value clears your threshold, with fractional-Kelly stake sizing. |
 | **Ratings** | Power rankings with offense/defense ratings and current starting QB. Click a team for its rating-history chart, recent results against the spread, and upcoming games. |
 | **Matchup** | Project any hypothetical game (home or neutral site) with fair spread/total/moneyline and alternate-line tables. Includes an odds calculator (break-even %, EV, Kelly) and a vig remover. |
@@ -81,7 +82,15 @@ python -m unittest                        # tests
    13.6 points), which turns projections into P(win), P(cover) at any spread, and P(over) at any total.
 4. **Tuning** (`app/tune.py`) fits the parameters on older seasons and checks them on recent seasons
    the tuner never saw.
-5. **Pick tiers** (`app/picks.py`) are based on how far the model's number is from the market's:
+5. **Calibration** (`app/picks.py`): the raw model is overconfident, so every probability shown is a
+   *realistic* one, learned from 20+ seasons of graded picks: `fair = 0.5 + k * (raw - 0.5)`. NFL spread
+   k is about 0.13 (a raw 63% is really ~51.6%); totals and college spreads show no reliable signal (k ≈ 0).
+   Moneyline chances start from the market's vig-free price and move only as far as history
+   justifies (weight ≈ 0.03 NFL, 0 college). "Check news" picks get no edge at all.
+6. **Line shopping** (`app/best_odds.py`): with an odds key, each pick and parlay leg uses the best line
+   *and* price across all sportsbooks, judged by expected value at that book's line. Set
+   `ODDS_REGIONS=us,us2` to shop even more books (costs 2x API credits).
+7. **Pick tiers** (`app/picks.py`) are based on how far the model's number is from the market's:
 
    | Tier | Spread | Total | Why |
    | --- | --- | --- | --- |

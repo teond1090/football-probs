@@ -1,3 +1,4 @@
+import copy
 import csv
 import io
 import logging
@@ -18,7 +19,10 @@ from .config import (AUTO_REFRESH_HOURS, CFBD_API_KEY, ODDS_API_KEY, REFRESH_COO
 from .data import cfb, nfl, odds_api
 from .edges import build_board
 from .models.ratings import RatingEngine, build_engine
-from .picks import TIER_ORDER, best_bets, best_bets_record, compute_all_picks, record, week_label
+from .best_odds import attach_best_odds
+from .parlays import best_bets_parlay_history, legs_for_week, suggestions
+from .picks import (TIER_ORDER, apply_calibration, best_bets, best_bets_record, compute_all_picks,
+                    fit_calibration, record, week_label)
 
 LEAGUES = ("nfl", "cfb")
 log = logging.getLogger("football")
@@ -71,11 +75,39 @@ def get_engine(league: str) -> RatingEngine:
     return _engines[league]
 
 
-def get_picks(league: str) -> tuple[dict, dict]:
+def get_picks(league: str) -> tuple[dict, dict, dict]:
+    """(picks by week, week start dates, calibration). Every pick carries calibrated fair_prob."""
     if league not in _picks:
         all_picks, starts, _ = compute_all_picks(league, db.load_games(league))
-        _picks[league] = (all_picks, starts)
+        first = min(k[0] for k in all_picks)
+        cal = fit_calibration([ps for k, ps in all_picks.items() if k[0] >= first + 3])
+        for ps in all_picks.values():
+            apply_calibration(ps, cal)
+        _picks[league] = (all_picks, starts, cal)
     return _picks[league]
+
+
+def _known_teams(league: str) -> set[str]:
+    season = current_season()
+    return {t for g in db.load_games(league) if g["season"] >= season - 1 for t in (g["home"], g["away"])}
+
+
+def _live_week(league: str, picks: list[dict], cal: dict) -> tuple[list[dict], dict]:
+    """A copy of the week's picks with the best line/price across all sportsbooks attached."""
+    picks = copy.deepcopy(picks)
+    status = {"enabled": bool(ODDS_API_KEY), "matched": 0, "fetched_at": None, "error": None}
+    if not ODDS_API_KEY or all(p["completed"] for p in picks):
+        return picks, status
+    try:
+        odds = odds_api.get_odds(league)
+    except Exception as e:  # never break picks over an odds hiccup
+        status["error"] = f"Odds API error: {e}"
+        return picks, status
+    status["fetched_at"] = odds.get("fetched_at")
+    status["remaining"] = odds.get("remaining")
+    status["error"] = odds.get("error")
+    status["matched"] = attach_best_odds(league, picks, odds.get("events", []), cal, _known_teams(league))
+    return picks, status
 
 
 def refresh_league(league: str, seasons: list[int] | None = None) -> int:
@@ -184,7 +216,7 @@ def _default_week(all_picks: dict, starts: dict) -> tuple:
 def _select_week(league: str, week: str | None) -> tuple[dict, dict, tuple]:
     if not db.load_games(league):
         raise HTTPException(400, f"No {league.upper()} data yet - click Refresh data first.")
-    all_picks, starts = get_picks(league)
+    all_picks, starts, _ = get_picks(league)
     if week:
         key = next((k for k in all_picks if _key_id(k) == week), None)
         if key is None:
@@ -201,6 +233,8 @@ def _sorted_picks(picks: list[dict]) -> list[dict]:
 @app.get("/api/picks/{league}")
 def weekly_picks(league: str, week: str | None = None):
     all_picks, starts, key = _select_week(_league(league), week)
+    cal = get_picks(league)[2]
+    week_picks, odds_status = _live_week(league, all_picks[key], cal)
     season = key[0]
     seasons = sorted({k[0] for k in all_picks}, reverse=True)
     season_keys = _ordered((k for k in all_picks if k[0] == season), starts)
@@ -221,8 +255,10 @@ def weekly_picks(league: str, week: str | None = None):
             {"season": s, "first_week": _key_id(_ordered((k for k in all_picks if k[0] == s), starts)[0])}
             for s in seasons
         ],
-        "picks": _sorted_picks(all_picks[key]),
-        "best_bets": best_bets(all_picks[key]),
+        "picks": _sorted_picks(week_picks),
+        "best_bets": best_bets(week_picks),
+        "calibration": cal,
+        "odds": odds_status,
         "best_bets_week": best_bets_record([all_picks[key]]),
         "best_bets_season": best_bets_record([all_picks[k] for k in season_keys]),
         "week_record": record(all_picks[key]),
@@ -253,6 +289,33 @@ def weekly_picks_csv(league: str, week: str | None = None):
     name = f"{league}-picks-{_key_id(key)}.csv"
     return Response(buf.getvalue(), media_type="text/csv",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+# --- Parlays -------------------------------------------------------------------------------------
+
+@app.get("/api/parlays/{league}")
+def parlays(league: str, week: str | None = None):
+    all_picks, starts, key = _select_week(_league(league), week)
+    cal = get_picks(league)[2]
+    week_picks, odds_status = _live_week(league, all_picks[key], cal)
+    legs = legs_for_week(week_picks, cal)
+    season = key[0]
+    first = min(k[0] for k in all_picks)
+
+    def hist(lo: int) -> dict:
+        weeks = [ps for k, ps in all_picks.items() if lo <= k[0] < season]
+        return {"from": lo, "to": season - 1,
+                "two": best_bets_parlay_history(weeks, 2), "three": best_bets_parlay_history(weeks, 3)}
+
+    return {
+        "league": league,
+        "week": {"id": _key_id(key), "label": week_label(key), "season": season},
+        "legs": sorted(legs, key=lambda l: (l["kickoff"] or "", l["game"], l["market"])),
+        "suggestions": suggestions(legs, week_picks) if legs else {},
+        "history": {"all_time": hist(first + 3), "recent": hist(season - 5)},
+        "calibration": cal,
+        "odds": odds_status,
+    }
 
 
 # --- Matchup calculator & team pages ------------------------------------------------------------
@@ -287,7 +350,7 @@ def team_detail(league: str, team: str):
     eng = get_engine(_league(league))
     if team not in eng.elo:
         raise HTTPException(404, f"Unknown team '{team}'")
-    all_picks, starts = get_picks(league)
+    all_picks, starts, _ = get_picks(league)
     season = max(k[0] for k in all_picks)
     games = [p for k in _ordered(all_picks, starts) if k[0] >= season - 1
              for p in all_picks[k] if team in (p["home"], p["away"])]

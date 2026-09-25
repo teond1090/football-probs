@@ -57,6 +57,10 @@ def make_pick(g: dict, pred, done: bool, scale: float = 1.0) -> dict:
         "proj_home": round(pred.home_score, 1), "proj_away": round(pred.away_score, 1),
         "home_win_prob": round(p_home, 4), "notes": pred.notes,
         "market_home_spread": g.get("home_spread"), "market_total": g.get("total_line"),
+        "market_home_ml": g.get("home_ml"), "market_away_ml": g.get("away_ml"),
+        # raw projection, so probabilities can be recomputed at any line a sportsbook offers
+        "model": {"home_margin": round(pred.home_margin, 3), "total": round(pred.total, 3),
+                  "margin_sd": pred.margin_sd, "total_sd": pred.total_sd},
     }
 
     # Straight-up winner
@@ -207,3 +211,93 @@ def best_bets_record(weeks: list[list[dict]]) -> dict:
             if bet["result"]:
                 _add(b, bet)
     return _finish(b)
+
+
+# --- Calibration --------------------------------------------------------------------------------
+# The raw model is overconfident: it may say a spread pick covers 63% of the time when picks
+# like it have historically covered ~52%. We learn a shrink factor per market from graded
+# history:  fair = 0.5 + k * (raw - 0.5),  fitted by least squares on past outcomes.
+# k = 1 means the raw numbers were right; k = 0 means they carried no information.
+
+CAL_MARKETS = ("spread", "total", "winner")
+
+
+def _market_prob(p: dict, team: str) -> float | None:
+    """The sportsbooks' vig-free win probability for a team, if moneylines are known."""
+    hml, aml = p.get("market_home_ml"), p.get("market_away_ml")
+    if not hml or not aml:
+        return None
+    ph, pa = odds_math.devig(hml, aml)
+    return ph if team == p["home"] else pa
+
+
+def _fit_ml_blend(weeks: list[list[dict]]) -> dict:
+    """How much the model should move the market's win probability: fair = q + w * (model - q).
+
+    Least squares on past outcomes. w = 0 means the market already knows everything the model does.
+    """
+    num = den = 0.0
+    n = 0
+    for picks in weeks:
+        for p in picks:
+            w = p["winner"]
+            if not p["completed"] or w["result"] not in ("win", "loss"):
+                continue
+            q = _market_prob(p, w["team"])
+            if q is None:
+                continue
+            d = w["prob"] - q
+            num += ((1.0 if w["result"] == "win" else 0.0) - q) * d
+            den += d * d
+            n += 1
+    return {"w": round(max(0.0, min(1.0, num / den)), 3) if den else 0.0, "n": n}
+
+
+def ml_fair_prob(p: dict, team: str, cal: dict) -> float:
+    """Fair win probability for a moneyline bet: the market's, nudged by the model."""
+    model = p["home_win_prob"] if team == p["home"] else 1 - p["home_win_prob"]
+    q = _market_prob(p, team)
+    if q is None:
+        return fair(model, cal["winner"]["k"])
+    return min(0.99, max(0.01, q + cal["ml_blend"]["w"] * (model - q)))
+
+
+def fit_calibration(weeks: list[list[dict]]) -> dict:
+    sums = {m: [0.0, 0.0, 0] for m in CAL_MARKETS}   # sum (y-.5)(p-.5), sum (p-.5)^2, n
+    for picks in weeks:
+        for p in picks:
+            for m in CAL_MARKETS:
+                x = p.get(m)
+                if not x or x.get("result") not in ("win", "loss"):
+                    continue
+                d = x["prob"] - 0.5
+                y = 1.0 if x["result"] == "win" else 0.0
+                sums[m][0] += (y - 0.5) * d
+                sums[m][1] += d * d
+                sums[m][2] += 1
+    cal = {m: {"k": round(max(0.0, min(1.5, a / b)), 3) if b else 1.0, "n": n}
+           for m, (a, b, n) in sums.items()}
+    cal["ml_blend"] = _fit_ml_blend(weeks)
+    return cal
+
+
+def fair(prob: float, k: float) -> float:
+    return min(0.99, max(0.01, 0.5 + k * (prob - 0.5)))
+
+
+def apply_calibration(picks: list[dict], cal: dict) -> None:
+    """Adds fair_prob (and fair EV) next to every raw model probability, in place."""
+    for p in picks:
+        for m in CAL_MARKETS:
+            x = p.get(m)
+            if x:
+                # "Check news" picks (model 6+ pts off the market) have historically hit ~50%:
+                # the market knew something the model didn't, so they get no edge.
+                raw_fair = 0.5 if x.get("tier") == "caution" else fair(x["prob"], cal[m]["k"])
+                x["fair_prob"] = round(raw_fair, 4)
+                if "price" in x:
+                    x["fair_ev"] = round(odds_math.expected_value(x["fair_prob"], x["price"]), 4)
+        ml = p.get("moneyline")
+        if ml:
+            ml["fair_prob"] = round(ml_fair_prob(p, ml["team"], cal), 4)
+            ml["fair_ev"] = round(odds_math.expected_value(ml["fair_prob"], ml["price"]), 4)

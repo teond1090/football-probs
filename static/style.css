@@ -271,6 +271,37 @@ tr.selected td { background: var(--accent-soft); font-weight: 600; }
 .res-loss { background: var(--bad); color: #fff; }
 .res-push { background: var(--bg-2); color: var(--muted); }
 
+/* ---- parlays ------------------------------------------------------------------------------- */
+.parlay-hero { align-items: center; }
+.parlay-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; }
+.parlay-card {
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px 16px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 8px;
+  border-top: 4px solid var(--accent); transition: transform .12s, box-shadow .15s;
+}
+.parlay-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-hover); }
+.parlay-card h3 { margin: 0; font-family: var(--display); font-size: 20px; font-weight: 700; letter-spacing: .3px; }
+.parlay-card .why { font-size: 12px; color: var(--muted); margin-top: -4px; }
+.leg { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px dashed var(--border); font-size: 13px; }
+.leg .lbl { font-weight: 700; flex: 1; min-width: 0; }
+.leg .odds { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pstats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 4px; }
+.pstat { background: var(--bg); border-radius: 10px; padding: 6px 8px; text-align: center; }
+.pstat b { display: block; font-family: var(--display); font-size: 22px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.pstat span { font-size: 10px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
+.parlay-card .actions { display: flex; justify-content: space-between; align-items: center; margin-top: auto; gap: 8px; }
+.builder { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
+.ticket { position: sticky; top: 130px; }
+.ticket h3 { margin: 0 0 8px; font-family: var(--display); font-size: 22px; }
+.ticket .empty { color: var(--muted); font-size: 13px; }
+.ticket .row { display: flex; justify-content: space-between; padding: 4px 0; font-variant-numeric: tabular-nums; }
+.ticket .big { font-family: var(--display); font-size: 30px; font-weight: 800; }
+.leg-table td { white-space: normal; }
+.leg-table tr.picked td { background: var(--accent-soft); }
+.leg-table tr.disabled td { opacity: .45; }
+.leg-table input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
+.game-head td { background: var(--bg-2); font-weight: 700; }
+
 /* ---- layout helpers ------------------------------------------------------------------------ */
 .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
 .split .panel { position: sticky; top: 130px; }
@@ -301,6 +332,8 @@ dialog .actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 /* ---- responsive ---------------------------------------------------------------------------- */
 @media (max-width: 900px) {
+  .builder { grid-template-columns: 1fr; }
+  .ticket { position: static; }
   .split { grid-template-columns: 1fr; }
   .split .panel { position: static; }
 }

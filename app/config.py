@@ -32,6 +32,9 @@ CFBD_API_KEY = os.getenv("CFBD_API_KEY", "")
 
 # How long to reuse a live-odds response before spending another API request.
 ODDS_CACHE_MINUTES = int(os.getenv("ODDS_CACHE_MINUTES", "15"))
+# Sportsbook regions to shop (us = major US books; add us2 for more books, e.g. "us,us2").
+# Each extra region multiplies the API credits a refresh costs.
+ODDS_REGIONS = os.getenv("ODDS_REGIONS", "us")
 # While the server runs, re-download schedules/scores/lines once they are older than this
 # (checked on start and hourly). 0 = never.
 AUTO_REFRESH_HOURS = float(os.getenv("AUTO_REFRESH_HOURS", "12"))

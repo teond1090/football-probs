@@ -29,6 +29,7 @@ function kickoff(s) {
 }
 
 function lineText(o) {
+  if (o.market === "parlay") return "";
   if (o.line == null) return "ML";
   return o.market === "spread" ? signed(o.line) : o.line;
 }
@@ -169,7 +170,7 @@ async function loadBets() {
       <th class="num">Model EV</th><th>Result</th><th class="num">P/L</th><th></th></tr></thead>
     <tbody>${bets.map((b) => `<tr>
       <td>${esc(b.created_at.slice(0, 10))}</td><td>${esc(b.league.toUpperCase())} · ${esc(b.game)}</td>
-      <td>${esc(b.selection)} ${b.line == null ? "ML" : b.market === "spread" ? signed(b.line) : b.line}</td>
+      <td>${esc(b.selection)} ${b.market === "parlay" ? "" : b.line == null ? "ML" : b.market === "spread" ? signed(b.line) : b.line}</td>
       <td class="num">${signed(b.price)}</td><td class="num">${money(b.stake)}</td>
       <td class="num">${pct(b.ev)}</td>
       <td><select data-settle="${b.id}">${["pending", "win", "loss", "push"].map((r) => `<option ${r === b.result ? "selected" : ""}>${r}</option>`).join("")}</select></td>
@@ -414,9 +415,10 @@ function renderBestBets(r) {
     return `<div class="bb">
       <div class="bb-rank">${i + 1}</div>
       <div>
-        <div class="bb-pick">${chip(b.team)} ${esc(b.team)} ${signed(b.line)} <span class="price">${signed(b.price)}</span></div>
+        <div class="bb-pick">${chip(b.team)} ${esc(b.team)} ${signed(b.best?.line ?? b.line)} <span class="price">${signed(b.best?.price ?? b.price)}${b.best ? ` @ ${esc(b.best.book)}` : ""}</span></div>
         <div class="bb-meta">${esc(b.away)} @ ${esc(b.home)}${finalLine}</div>
-        <div class="bb-meta">Model is ${b.edge_pts} pts off the line · model: covers ${pct(b.prob, 0)}</div>
+        <div class="bb-meta">Model is ${b.edge_pts} pts off the line · realistic chance <b>${pct(b.best?.fair_prob ?? b.fair_prob)}</b>
+          <span title="Raw model estimate before calibration">(raw ${pct(b.prob, 0)})</span>${b.best && b.best.line !== b.line ? ` · consensus line ${signed(b.line)}` : ""}</div>
       </div>
       <div class="bb-side">
         ${b.completed ? resBadge(b.result) : `<span class="bb-stake">1 unit${unit ? ` = ${money(unit)}` : ""}</span>
@@ -454,7 +456,8 @@ function renderPicks(r) {
     trackCard("Total picks (lean)", all["total:lean"], recent["total:lean"]),
     trackCard("Winner picks (straight up)", all.winner, recent.winner, { breakEven: false }),
   ].join("");
-  $("#picks-track-note").textContent = `Graded against closing lines, ${r.history.all_time.from}–${r.history.all_time.to}. `
+  const k = r.calibration?.spread?.k;
+  $("#picks-track-note").textContent = (k != null ? `"Realistic chance" = the model's raw estimate shrunk to match how picks like it have actually done (spread factor ${k}). ` : "") + `Graded against closing lines, ${r.history.all_time.from}–${r.history.all_time.to}. `
     + "The black tick marks the 52.4% break-even at -110; green bars are above it. Winner picks are for information, not bets: favorites pay less than even money.";
 
   // week summary
@@ -467,6 +470,8 @@ function renderPicks(r) {
   const picks = r.picks.filter((p) => filter === "all" || ["best", "lean"].includes(p.best_tier));
   $("#picks").innerHTML = picks.map(renderPick).join("") || `<p class="muted">No picks for this week${filter === "picks" ? " at best/lean confidence" : ""}.</p>`;
 }
+
+const bestLine = (x) => (x.best ? `<br>Best price: <b>${x.best.line != null && x.team ? signed(x.best.line) : x.best.line} ${signed(x.best.price)}</b> @ ${esc(x.best.book)}` : "");
 
 function renderPick(p) {
   const i = state.picks.picks.indexOf(p);
@@ -483,13 +488,13 @@ function renderPick(p) {
     <div class="pick-line"><div><div class="what">Winner: ${esc(w.team)}</div><div class="meta">${pct(w.prob, 0)} to win</div></div>
       <div>${resBadge(w.result)}</div></div>
     ${sp ? `<div class="pick-line"><div><div class="what">${esc(sp.team)} ${signed(sp.line)} <span class="meta">(${signed(sp.price)})</span></div>
-      <div class="meta">Spread · model is ${sp.edge_pts} pts off the line · model: covers ${pct(sp.prob, 0)}</div></div>
+      <div class="meta">Spread · ${sp.edge_pts} pts off the line · realistic chance ${pct(sp.fair_prob)}${bestLine(sp)}</div></div>
       <div>${tierBadge(sp.tier)} ${resBadge(sp.result)} ${["best", "lean"].includes(sp.tier) ? trackBtn("spread") : ""}</div></div>` : ""}
     ${tp ? `<div class="pick-line"><div><div class="what">${tp.side} ${tp.line} <span class="meta">(${signed(tp.price)})</span></div>
-      <div class="meta">Total · projected ${(p.proj_home + p.proj_away).toFixed(1)} · model: hits ${pct(tp.prob, 0)}</div></div>
+      <div class="meta">Total · projected ${(p.proj_home + p.proj_away).toFixed(1)} · realistic chance ${pct(tp.fair_prob)}${bestLine(tp)}</div></div>
       <div>${tierBadge(tp.tier)} ${resBadge(tp.result)} ${tp.tier === "lean" ? trackBtn("total") : ""}</div></div>` : ""}
     ${ml ? `<div class="pick-line"><div><div class="what">${esc(ml.team)} ML ${signed(ml.price)}</div>
-      <div class="meta">Moneyline value · model ${pct(ml.prob, 0)} · EV ${pct(ml.ev)}</div></div><div>${resBadge(ml.result)}</div></div>` : ""}
+      <div class="meta">Moneyline · realistic chance ${pct(ml.fair_prob)} · EV ${pct(ml.fair_ev)}</div></div><div>${resBadge(ml.result)}</div></div>` : ""}
     ${p.notes.length ? `<div class="notes">${p.notes.map(esc).join("<br>")}</div>` : ""}
   </div>`;
 }
@@ -502,8 +507,8 @@ $("#picks").addEventListener("click", (e) => {
   const x = p[m];
   openTrack({
     game: `${p.away} @ ${p.home}`, market: m,
-    selection: m === "spread" ? x.team : x.side, line: x.line, price: x.price,
-    model_prob: x.prob, book: null,
+    selection: m === "spread" ? x.team : x.side, line: x.best?.line ?? x.line, price: x.best?.price ?? x.price,
+    model_prob: x.best?.fair_prob ?? x.fair_prob, book: x.best?.book ?? null,
   }, unitSize());
 });
 
@@ -512,8 +517,8 @@ $("#best-bets").addEventListener("click", (e) => {
   if (i == null) return;
   const b = state.picks.best_bets[i];
   openTrack({
-    game: `${b.away} @ ${b.home}`, market: "spread", selection: b.team, line: b.line,
-    price: b.price, model_prob: b.prob, book: null,
+    game: `${b.away} @ ${b.home}`, market: "spread", selection: b.team, line: b.best?.line ?? b.line,
+    price: b.best?.price ?? b.price, model_prob: b.best?.fair_prob ?? b.fair_prob, book: b.best?.book ?? null,
   }, unitSize());
 });
 
@@ -527,6 +532,151 @@ for (const [id, step] of [["#week-prev", -1], ["#week-next", 1]]) {
     if (weeks[idx]) loadPicks(weeks[idx].id);
   });
 }
+
+// ---- parlays -----------------------------------------------------------------------------------
+const parlay = { data: null, picked: new Set() };
+const decOf = (price) => (price > 0 ? 1 + price / 100 : 1 + 100 / Math.abs(price));
+const amerOf = (d) => (d >= 2 ? Math.round((d - 1) * 100) : Math.round(-100 / (d - 1)));
+
+function legRow(l) {
+  return `<div class="leg">${l.team ? chip(l.team) : `<span class="chip" style="--c:var(--bg-2);--t:var(--text)">${l.label.startsWith("Over") ? "O" : "U"}</span>`}
+    <span class="lbl">${esc(l.label)} <span class="muted small">· ${esc(l.game)}</span></span>
+    <span class="odds">${signed(l.price)}${l.book ? ` ${esc(l.book)}` : ""} · ${pct(l.prob, 0)}</span></div>`;
+}
+
+function parlayCard(title, why, c) {
+  if (!c) return "";
+  const stake = unitSize() || 10;
+  return `<div class="parlay-card">
+    <h3>${title}</h3><div class="why">${why}</div>
+    ${c.legs.map(legRow).join("")}
+    <div class="pstats">
+      <div class="pstat"><b>${pct(c.prob)}</b><span>Chance to hit</span></div>
+      <div class="pstat"><b>${signed(c.price)}</b><span>Pays</span></div>
+      <div class="pstat"><b class="${cls(c.ev)}">${c.ev >= 0 ? "+" : ""}${pct(c.ev)}</b><span>Exp. value</span></div>
+    </div>
+    <div class="actions"><span class="muted small">${money(stake)} wins ${money(stake * (c.decimal - 1))} · fair price ${signed(c.fair_price)}</span>
+      <button class="small" data-load='${JSON.stringify(c.legs.map((l) => l.id))}'>Use in builder</button></div>
+  </div>`;
+}
+
+async function loadParlays() {
+  $("#parlay-alert").innerHTML = "";
+  $("#parlay-suggestions").innerHTML = `<p class="muted">Crunching every combination…</p>`;
+  try {
+    const r = await api(`/api/parlays/${state.league}${state.week ? `?week=${encodeURIComponent(state.week)}` : ""}`);
+    parlay.data = r;
+    parlay.picked = new Set([...parlay.picked].filter((id) => r.legs.some((l) => l.id === id)));
+    renderParlays(r);
+  } catch (e) {
+    $("#parlay-suggestions").innerHTML = "";
+    $("#parlay-alert").innerHTML = `<div class="alert">${esc(e.message)}</div>`;
+  }
+}
+
+function renderParlays(r) {
+  $("#parlay-week").textContent = `${r.week.label}, ${r.week.season}`;
+  const alerts = [];
+  if (!r.odds.enabled) alerts.push("Using consensus lines. Add an ODDS_API_KEY to shop every sportsbook for the best line and price on each leg.");
+  else if (r.odds.error) alerts.push(r.odds.error);
+  else if (r.odds.matched) alerts.push(`Best prices found across sportsbooks for ${r.odds.matched} games.`);
+  if (!r.legs.length) alerts.push("No upcoming games this week, so there's nothing to parlay. Pick another week on Weekly picks.");
+  $("#parlay-alert").innerHTML = alerts.map((a) => `<div class="alert">${esc(a)}</div>`).join("");
+
+  const s = r.suggestions || {};
+  $("#parlay-suggestions").innerHTML = [
+    parlayCard("🔥 Best bets parlay", "This week's top 2 best bets together", s.best_bets_2),
+    parlayCard("🔥 Best bets 3-leg", "The top 3 best bets together", s.best_bets_3),
+    ...(s.best_value || []).slice(0, 2).map((c, i) => parlayCard(`💎 Best value #${i + 1}`, "Highest expected value, paying at least even money", c)),
+    parlayCard("🛡️ Most likely 2-leg", "Highest chance to hit among 2-leg parlays paying even money or better", s.safest_2),
+    parlayCard("🛡️ Most likely 3-leg", "Highest chance to hit among 3-leg parlays paying +200 or better", s.safest_3),
+  ].join("") || `<p class="muted">No suggestions for this week.</p>`;
+
+  const h = r.history.all_time, hr = r.history.recent;
+  const hc = (title, a, b) => `<div class="card accent"><div class="k">${title}</div><div class="v">${pct(a.win_pct)}</div>
+    <div class="sub">${a.wins}-${a.losses} all-time · <span class="${cls(a.units)}">${signed(a.units)} units</span> (${pct(a.roi)} ROI)<br>
+    last 5 seasons: ${pct(b.win_pct)} · <span class="${cls(b.units)}">${signed(b.units)} units</span></div></div>`;
+  $("#parlay-history").innerHTML = hc("Top-2 best bets parlay, every week", h.two, hr.two) + hc("Top-3 best bets parlay, every week", h.three, hr.three)
+    + `<div class="card"><div class="k">How to read this</div><div class="sub" style="margin-top:6px">A 2-leg parlay at -110 needs to hit 27.4% to break even, and a 3-leg needs 14.4%.
+      Parlays only have positive value when their legs do: they multiply your edge or the book's.</div></div>`;
+  renderBuilder();
+}
+
+function renderBuilder() {
+  const r = parlay.data;
+  if (!r) return;
+  const pickedGames = new Set(r.legs.filter((l) => parlay.picked.has(l.id)).map((l) => l.game_id));
+  let lastGame = null;
+  const rows = r.legs.map((l) => {
+    const head = l.game !== lastGame ? `<tr class="game-head"><td colspan="5">${esc(l.game)} <span class="muted small">${kickoff(l.kickoff)}</span></td></tr>` : "";
+    lastGame = l.game;
+    const on = parlay.picked.has(l.id);
+    const blocked = !on && pickedGames.has(l.game_id);
+    return `${head}<tr class="${on ? "picked" : ""} ${blocked ? "disabled" : ""}">
+      <td><input type="checkbox" data-leg="${l.id}" ${on ? "checked" : ""} ${blocked ? "disabled title=\"One leg per game\"" : ""}></td>
+      <td>${esc(l.market)}</td><td><b>${esc(l.label)}</b>${l.tier && l.tier !== "pass" ? ` ${tierBadge(l.tier)}` : ""}</td>
+      <td class="num">${signed(l.price)}${l.book ? `<br><span class="muted small">${esc(l.book)}</span>` : ""}</td>
+      <td class="num">${pct(l.prob)}</td></tr>`;
+  }).join("");
+  $("#parlay-legs").innerHTML = `<div class="table-wrap"><table class="leg-table">
+    <thead><tr><th></th><th>Market</th><th>Pick</th><th class="num">Best price</th><th class="num">Chance</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+  renderTicket();
+}
+
+function renderTicket() {
+  const legs = parlay.data.legs.filter((l) => parlay.picked.has(l.id));
+  if (legs.length < 2) {
+    $("#parlay-ticket").innerHTML = `<h3>🎟️ Your ticket</h3><p class="empty">${legs.length ? "Add at least one more leg." : "Tick 2 or more legs (one per game) to build a parlay."}</p>
+      ${legs.map(legRow).join("")}`;
+    return;
+  }
+  const prob = legs.reduce((a, l) => a * l.prob, 1), dec = legs.reduce((a, l) => a * l.decimal, 1);
+  const price = amerOf(dec), ev = prob * dec - 1;
+  const stake = Number(state.parlayStake ?? (unitSize() || 10));
+  $("#parlay-ticket").innerHTML = `<h3>🎟️ Your ${legs.length}-leg parlay</h3>
+    ${legs.map(legRow).join("")}
+    <div class="row" style="margin-top:8px"><span>Pays</span><span class="big">${signed(price)}</span></div>
+    <div class="row"><span>Chance to hit</span><b>${pct(prob)}</b></div>
+    <div class="row"><span>Expected value</span><b class="${cls(ev)}">${ev >= 0 ? "+" : ""}${pct(ev)}</b></div>
+    <div class="row"><label>Stake $ <input id="parlay-stake" type="number" min="0" step="1" value="${stake}"></label>
+      <span>to win <b>${money(stake * (dec - 1))}</b></span></div>
+    <p class="muted small">${ev < 0 ? "Negative expected value: over many bets, this loses about " + pct(-ev) + " of what you stake." : "Positive expected value by the model's realistic numbers. Still high variance: it misses " + pct(1 - prob) + " of the time."}</p>
+    <div class="row"><button class="secondary" id="parlay-clear">Clear</button><button id="parlay-track">Track parlay</button></div>`;
+}
+
+$("#parlay-suggestions").addEventListener("click", (e) => {
+  const ids = e.target.dataset.load;
+  if (!ids) return;
+  parlay.picked = new Set(JSON.parse(ids));
+  renderBuilder();
+  $("#parlay-legs").scrollIntoView({ behavior: "smooth", block: "start" });
+});
+$("#parlay-legs").addEventListener("change", (e) => {
+  const id = e.target.dataset.leg;
+  if (id == null) return;
+  const n = Number(id);
+  if (e.target.checked) parlay.picked.add(n); else parlay.picked.delete(n);
+  renderBuilder();
+});
+$("#parlay-ticket").addEventListener("input", (e) => {
+  if (e.target.id !== "parlay-stake") return;
+  state.parlayStake = e.target.value;
+  clearTimeout(state.stakeTimer);
+  state.stakeTimer = setTimeout(renderTicket, 400);
+});
+$("#parlay-ticket").addEventListener("click", async (e) => {
+  if (e.target.id === "parlay-clear") { parlay.picked.clear(); renderBuilder(); }
+  if (e.target.id === "parlay-track") {
+    const legs = parlay.data.legs.filter((l) => parlay.picked.has(l.id));
+    const dec = legs.reduce((a, l) => a * l.decimal, 1);
+    openTrack({
+      game: `${legs.length}-leg parlay`, market: "parlay",
+      selection: legs.map((l) => l.label).join(" + "), line: null, price: amerOf(dec),
+      model_prob: legs.reduce((a, l) => a * l.prob, 1), book: null,
+    }, Number(state.parlayStake ?? (unitSize() || 10)));
+  }
+});
 
 // ---- matchup calculator -----------------------------------------------------------------------
 async function loadMatchupTeams() {
@@ -637,6 +787,7 @@ function show(tab) {
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   document.querySelectorAll(".tab").forEach((s) => s.classList.toggle("active", s.id === `tab-${tab}`));
   if (tab === "picks") loadPicks();
+  if (tab === "parlays") loadParlays();
   if (tab === "board") loadBoard();
   if (tab === "ratings") loadRatings();
   if (tab === "matchup") loadMatchupTeams().then(runMatchup);

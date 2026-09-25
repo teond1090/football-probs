@@ -30,6 +30,7 @@
     </div>
     <nav>
       <button data-tab="picks" class="active"><span class="ico" aria-hidden="true">📅</span>Weekly picks</button>
+      <button data-tab="parlays"><span class="ico" aria-hidden="true">🧩</span>Parlays</button>
       <button data-tab="board"><span class="ico" aria-hidden="true">💰</span>Live odds</button>
       <button data-tab="ratings"><span class="ico" aria-hidden="true">📊</span>Ratings</button>
       <button data-tab="matchup"><span class="ico" aria-hidden="true">⚔️</span>Matchup</button>
@@ -62,6 +63,33 @@
       <h2 class="section">🏟️ Every game this week</h2>
       <div id="picks-week-summary"></div>
       <div id="picks" class="games"></div>
+    </section>
+
+    <!-- Parlays -->
+    <section id="tab-parlays" class="tab">
+      <div id="parlay-alert"></div>
+      <div class="hero parlay-hero">
+        <div>
+          <div class="hero-k">Parlays</div>
+          <div class="hero-t">Build a parlay</div>
+          <div class="hero-sub">Every leg has to win. The payout multiplies, and so does the sportsbook's cut.<br>
+            Chances shown are <b>realistic</b>: calibrated on 20+ seasons of graded picks and anchored to the betting market.</div>
+        </div>
+        <div class="hero-stats">
+          <div class="hero-stat"><b>+264</b><span>2 legs @ -110</span></div>
+          <div class="hero-stat"><b>+596</b><span>3 legs @ -110</span></div>
+          <div class="hero-stat"><b>52.4%</b><span>per-leg break-even</span></div>
+        </div>
+      </div>
+      <h2 class="section">💡 Suggested parlays <span class="muted small" id="parlay-week"></span></h2>
+      <div id="parlay-suggestions" class="parlay-grid"></div>
+      <h2 class="section">📜 Best-bets parlay track record</h2>
+      <div id="parlay-history" class="cards"></div>
+      <h2 class="section">🛠️ Parlay builder</h2>
+      <div class="builder">
+        <div id="parlay-legs"></div>
+        <aside class="panel ticket" id="parlay-ticket"></aside>
+      </div>
     </section>
 
     <!-- Live odds board -->
