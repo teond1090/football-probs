@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Football Probabilities</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">Football Probabilities</div>
+    <div class="league-toggle" role="tablist">
+      <button data-league="nfl" class="active">NFL</button>
+      <button data-league="cfb">College</button>
+    </div>
+    <nav>
+      <button data-tab="board" class="active">This week</button>
+      <button data-tab="ratings">Ratings</button>
+      <button data-tab="backtest">Backtest</button>
+      <button data-tab="bets">My bets</button>
+    </nav>
+    <div class="status" id="status"></div>
+  </header>
+
+  <main>
+    <section id="tab-board" class="tab active">
+      <div class="toolbar">
+        <label>Min EV <input id="min-ev" type="number" value="3" step="0.5" min="0"> %</label>
+        <label>Kelly <select id="kelly">
+          <option value="0.125">1/8</option>
+          <option value="0.25" selected>1/4</option>
+          <option value="0.5">1/2</option>
+        </select></label>
+        <label>Bankroll $<input id="bankroll" type="number" value="1000" step="100" min="0"></label>
+        <button id="reload-odds">Refresh odds</button>
+        <button id="refresh-data" class="secondary">Refresh data</button>
+        <span class="muted" id="board-meta"></span>
+      </div>
+      <div id="board-alert"></div>
+      <h2>Value bets</h2>
+      <div id="value-bets"></div>
+      <h2>All games</h2>
+      <div id="games" class="games"></div>
+    </section>
+
+    <section id="tab-ratings" class="tab">
+      <div id="ratings"></div>
+    </section>
+
+    <section id="tab-backtest" class="tab">
+      <div class="toolbar">
+        <label>From season <input id="bt-start" type="number" placeholder="auto"></label>
+        <label>Min EV <input id="bt-ev" type="number" value="2" step="0.5" min="0"> %</label>
+        <button id="run-backtest">Run backtest</button>
+      </div>
+      <p class="muted">Replays history game by game. The model only knows what happened before each kickoff,
+        and bets against the closing line. You need about a 52.4% win rate at -110 to break even.</p>
+      <div id="backtest"></div>
+    </section>
+
+    <section id="tab-bets" class="tab">
+      <div id="bets-summary" class="cards"></div>
+      <div id="bets"></div>
+    </section>
+  </main>
+
+  <dialog id="bet-dialog">
+    <form method="dialog" id="bet-form">
+      <h3>Track bet</h3>
+      <p id="bet-desc"></p>
+      <label>Price <input name="price" type="number" required></label>
+      <label>Stake $ <input name="stake" type="number" step="0.01" min="0" required></label>
+      <label>Notes <input name="notes" type="text"></label>
+      <div class="actions">
+        <button value="cancel" formnovalidate class="secondary">Cancel</button>
+        <button value="save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
