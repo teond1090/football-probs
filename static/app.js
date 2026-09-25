@@ -201,7 +201,7 @@ async function loadRatings() {
     $("#ratings").innerHTML = `<div class="table-wrap"><table>
       <thead><tr><th>#</th><th>Team</th><th class="num">Elo</th><th class="num">Pts vs avg</th>
         <th class="num">Off</th><th class="num">Def</th>${state.league === "nfl" ? "<th>QB</th>" : ""}</tr></thead>
-      <tbody>${rows.map((r, i) => `<tr class="clickable" data-team="${esc(r.team)}"><td>${i + 1}</td><td>${esc(r.team)}</td>
+      <tbody>${rows.map((r, i) => `<tr class="clickable" data-team="${esc(r.team)}"><td>${i + 1}</td><td>${chip(r.team)}</td>
         <td class="num">${r.elo}</td><td class="num">${signed(r.pts_vs_avg)}</td>
         <td class="num">${signed(r.off)}</td><td class="num">${signed(r.def)}</td>
         ${state.league === "nfl" ? `<td>${esc(r.qb || "")}</td>` : ""}</tr>`).join("")}</tbody></table></div>`;
@@ -296,17 +296,57 @@ async function runBacktest() {
   }
 }
 
+// ---- team colors ------------------------------------------------------------------------------
+const NFL_COLORS = {
+  ARI: "#97233F", ATL: "#A71930", BAL: "#241773", BUF: "#00338D", CAR: "#0085CA", CHI: "#0B162A",
+  CIN: "#FB4F14", CLE: "#311D00", DAL: "#041E42", DEN: "#FB4F14", DET: "#0076B6", GB: "#203731",
+  HOU: "#03202F", IND: "#002C5F", JAX: "#006778", KC: "#E31837", LV: "#000000", LAC: "#0080C6",
+  LA: "#003594", MIA: "#008E97", MIN: "#4F2683", NE: "#002244", NO: "#D3BC8D", NYG: "#0B2265",
+  NYJ: "#125740", PHI: "#004C54", PIT: "#FFB612", SF: "#AA0000", SEA: "#002244", TB: "#D50A0A",
+  TEN: "#0C2340", WAS: "#5A1414",
+};
+
+function teamColor(team) {
+  if (state.league === "nfl" && NFL_COLORS[team]) return NFL_COLORS[team];
+  // College: a stable color per school name
+  let h = 0;
+  for (const ch of team) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return `hsl(${h % 360} 55% 36%)`;
+}
+
+function inkFor(bg) {
+  if (!bg.startsWith("#")) return "#fff";
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(bg.slice(i, i + 2), 16) / 255)
+    .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.4 ? "#111" : "#fff";
+}
+
+const chip = (team) => {
+  const c = teamColor(team);
+  return `<span class="chip" style="--c:${c};--t:${inkFor(c)}">${esc(team)}</span>`;
+};
+const teamsLine = (away, home, neutral) => `${chip(away)}<span class="at">${neutral ? "vs" : "@"}</span>${chip(home)}`;
+
+function winBar(away, home, pHome) {
+  return `<div class="wp" role="img" aria-label="${esc(home)} ${pct(pHome, 0)} to win">
+      <div style="width:${((1 - pHome) * 100).toFixed(1)}%;background:${teamColor(away)}"></div>
+      <div style="width:${(pHome * 100).toFixed(1)}%;background:${teamColor(home)}"></div></div>
+    <div class="wp-labels"><span>${esc(away)} ${pct(1 - pHome, 0)}</span><span>${esc(home)} ${pct(pHome, 0)}</span></div>`;
+}
+
 // ---- weekly picks ------------------------------------------------------------------------------
-const TIER_LABEL = { best: "Best", lean: "Lean", caution: "Check news", pass: "Pass" };
-const tierBadge = (t) => `<span class="tier tier-${t}" title="${esc(TIER_TIPS[t])}">${TIER_LABEL[t]}</span>`;
+const TIER_LABEL = { best: "★ Best", lean: "Lean", caution: "⚠ Check news", pass: "Pass" };
 const TIER_TIPS = {
   best: "Model differs from the line by 3-6 pts, the range where it has historically done best",
   lean: "Small disagreement with the line; historically close to a coin flip",
   caution: "Model disagrees with the market by 6+ pts. The market usually knows something (injury, QB news). Check before betting.",
   pass: "Model agrees with the line; no bet",
 };
+const tierBadge = (t) => `<span class="tier tier-${t}" title="${esc(TIER_TIPS[t])}">${TIER_LABEL[t]}</span>`;
 const resBadge = (r) => (r ? `<span class="res res-${r}">${r.toUpperCase()}</span>` : "");
 const rec = (b) => (b ? `${b.wins}-${b.losses}${b.pushes ? `-${b.pushes}` : ""}` : "–");
+const BREAK_EVEN = 0.524;
+const unitSize = () => (Number($("#bankroll").value) || 0) * 0.01;
 
 async function loadPicks(week = state.week) {
   $("#picks-alert").innerHTML = "";
@@ -318,14 +358,79 @@ async function loadPicks(week = state.week) {
     renderPicks(r);
   } catch (e) {
     $("#picks").innerHTML = "";
+    $("#picks-hero").innerHTML = "";
+    $("#best-bets").innerHTML = "";
     $("#picks-alert").innerHTML = `<div class="alert">${esc(e.message)}</div>`;
   }
 }
 
-function trackCard(title, all, recent) {
-  return `<div class="card"><div class="k">${title}</div>
+function meter(p, { breakEven = true } = {}) {
+  if (p == null) return "";
+  const lo = 0.4, hi = breakEven ? 0.6 : 0.8;
+  const pos = (x) => `${(Math.max(0, Math.min(1, (x - lo) / (hi - lo))) * 100).toFixed(1)}%`;
+  const cls = !breakEven ? "info" : p >= BREAK_EVEN ? "above" : "";
+  return `<div class="meter"><div class="fill ${cls}" style="width:${pos(p)}"></div>
+      ${breakEven ? `<div class="be" style="left:${pos(BREAK_EVEN)}" title="Break-even 52.4%"></div>` : ""}</div>
+    <div class="meter-scale"><span>${pct(lo, 0)}</span>${breakEven ? "<span>break-even 52.4%</span>" : ""}<span>${pct(hi, 0)}</span></div>`;
+}
+
+function trackCard(title, all, recent, opts = {}) {
+  return `<div class="card ${opts.accent ? "accent" : ""}"><div class="k">${title}</div>
     <div class="v">${pct(all?.win_pct)}</div>
-    <div class="sub">${all ? `${rec(all)} all-time` : "no history"}<br>${recent ? `${pct(recent.win_pct)} last 5 seasons` : ""}</div></div>`;
+    ${meter(all?.win_pct, opts)}
+    <div class="sub">${all ? `${rec(all)} all-time` : "no history"}${recent ? ` · ${pct(recent.win_pct)} last 5 seasons` : ""}
+      ${opts.units && all ? `<br>${signed(all.units)} units all-time` : ""}</div></div>`;
+}
+
+function dateRange(r) {
+  const days = r.picks.map((p) => p.kickoff).filter(Boolean).sort();
+  if (!days.length) return "";
+  const f = (s) => kickoff(s).split(",").slice(0, 2).join(",");
+  const a = f(days[0]), b = f(days[days.length - 1]);
+  return a === b ? a : `${a} – ${b}`;
+}
+
+function renderHero(r) {
+  const n = r.picks.length, done = r.picks.filter((p) => p.completed).length;
+  const caution = r.picks.filter((p) => p.spread?.tier === "caution").length;
+  const bbw = r.best_bets_week;
+  $("#picks-hero").innerHTML = `<div class="hero">
+    <div><div class="hero-k">${r.league.toUpperCase()} · ${r.week.season} season</div>
+      <div class="hero-t">${esc(r.week.label)}</div>
+      <div class="hero-sub">${esc(dateRange(r))} · ${n} games</div></div>
+    <div class="hero-stats">
+      <div class="hero-stat"><b>${r.best_bets.length}</b><span>Best bets</span></div>
+      <div class="hero-stat"><b>${caution}</b><span>Check news</span></div>
+      <div class="hero-stat"><b>${done}/${n}</b><span>Final</span></div>
+      ${bbw.wins + bbw.losses ? `<div class="hero-stat"><b>${rec(bbw)}</b><span>Best bets this week</span></div>` : ""}
+    </div></div>`;
+}
+
+function renderBestBets(r) {
+  const hist = r.history.all_time.best_bets, recent = r.history.recent.best_bets, season = r.best_bets_season;
+  const unit = unitSize();
+  const items = r.best_bets.map((b, i) => {
+    const finalLine = b.completed ? ` · Final ${esc(b.away)} ${b.away_score}–${b.home_score} ${esc(b.home)}` : ` · ${kickoff(b.kickoff)}`;
+    return `<div class="bb">
+      <div class="bb-rank">${i + 1}</div>
+      <div>
+        <div class="bb-pick">${chip(b.team)} ${esc(b.team)} ${signed(b.line)} <span class="price">${signed(b.price)}</span></div>
+        <div class="bb-meta">${esc(b.away)} @ ${esc(b.home)}${finalLine}</div>
+        <div class="bb-meta">Model is ${b.edge_pts} pts off the line · model: covers ${pct(b.prob, 0)}</div>
+      </div>
+      <div class="bb-side">
+        ${b.completed ? resBadge(b.result) : `<span class="bb-stake">1 unit${unit ? ` = ${money(unit)}` : ""}</span>
+          <button class="small" data-bb="${i}">Track bet</button>`}
+      </div></div>`;
+  }).join("");
+  $("#best-bets").innerHTML = `<section class="bestbets">
+    <div class="bb-head"><h2>🔥 This week's best bets</h2>
+      <div class="bb-record">Best-bets record: <b>${pct(hist.win_pct)}</b> all-time (${rec(hist)}, ${signed(hist.units)}u) ·
+        <b>${pct(recent.win_pct)}</b> last 5 seasons · this season <b>${rec(season)}</b></div></div>
+    <div class="bb-list">${items || `<div class="bb-empty">No best bets this week. The model doesn't see a big enough edge anywhere, and sitting a week out is a legitimate choice.</div>`}</div>
+    <p class="bb-note">The top ${5} spread picks where the model is 3–6 points off the line. Suggested stake: 1 unit = 1% of your bankroll (set it on the Live odds tab), same size every bet.
+      Historically these have been only slightly above the 52.4% break-even line, so keep stakes small.</p>
+  </section>`;
 }
 
 function renderPicks(r) {
@@ -337,16 +442,20 @@ function renderPicks(r) {
   $("#week-next").disabled = idx >= r.weeks.length - 1;
   $("#picks-csv").href = `/api/picks/${state.league}/csv?week=${encodeURIComponent(r.week.id)}`;
 
+  renderHero(r);
+  renderBestBets(r);
+
   // track record (honesty first)
   const all = r.history.all_time.record, recent = r.history.recent.record;
   $("#picks-track").innerHTML = [
-    trackCard("Winner picks (straight up)", all.winner, recent.winner),
-    trackCard("Best spread picks", all["spread:best"], recent["spread:best"]),
+    trackCard("Best bets (top 5 / week)", r.history.all_time.best_bets, r.history.recent.best_bets, { accent: true, units: true }),
+    trackCard("All ★ Best spread picks", all["spread:best"], recent["spread:best"]),
     trackCard("Lean spread picks", all["spread:lean"], recent["spread:lean"]),
     trackCard("Total picks (lean)", all["total:lean"], recent["total:lean"]),
+    trackCard("Winner picks (straight up)", all.winner, recent.winner, { breakEven: false }),
   ].join("");
-  $("#picks-track-note").textContent = `Historical record of each pick type, ${r.history.all_time.from}–${r.history.all_time.to}, graded against closing lines. `
-    + "Break-even at -110 is 52.4%. Winner picks are for info, not bets: favorites pay less than even money.";
+  $("#picks-track-note").textContent = `Graded against closing lines, ${r.history.all_time.from}–${r.history.all_time.to}. `
+    + "The black tick marks the 52.4% break-even at -110; green bars are above it. Winner picks are for information, not bets: favorites pay less than even money.";
 
   // week summary
   const wr = r.week_record, sr = r.season_record;
@@ -364,10 +473,12 @@ function renderPick(p) {
   const w = p.winner, sp = p.spread, tp = p.total, ml = p.moneyline;
   const final = p.completed ? `<div class="final">Final: ${esc(p.away)} ${p.away_score} – ${esc(p.home)} ${p.home_score}</div>` : "";
   const trackBtn = (m) => (!p.completed ? `<button class="secondary small" data-pick="${i}" data-market="${m}">Track</button>` : "");
-  return `<div class="game ${p.best_tier === "best" ? "tier-card-best" : ""}">
-    <div class="matchup"><span>${esc(p.away)} @ ${esc(p.home)}${p.neutral ? " (neutral)" : ""}</span><span class="muted">${kickoff(p.kickoff)}</span></div>
+  const topTier = sp?.tier === "caution" ? "caution" : p.best_tier;
+  return `<div class="game tier-card-${topTier}">
+    <div class="matchup"><span class="teams">${teamsLine(p.away, p.home, p.neutral)}</span><span class="muted small">${kickoff(p.kickoff)}</span></div>
     <div class="proj">Projected ${esc(p.away)} ${p.proj_away.toFixed(0)} – ${esc(p.home)} ${p.proj_home.toFixed(0)}
       ${p.away_qb && p.home_qb ? `· QBs ${esc(p.away_qb)} / ${esc(p.home_qb)}` : ""}</div>
+    ${winBar(p.away, p.home, p.home_win_prob)}
     ${final}
     <div class="pick-line"><div><div class="what">Winner: ${esc(w.team)}</div><div class="meta">${pct(w.prob, 0)} to win</div></div>
       <div>${resBadge(w.result)}</div></div>
@@ -388,13 +499,22 @@ $("#picks").addEventListener("click", (e) => {
   if (i == null) return;
   const p = state.picks.picks[i];
   const m = e.target.dataset.market;
-  const bankroll = Number($("#bankroll").value) || 0;
   const x = p[m];
   openTrack({
     game: `${p.away} @ ${p.home}`, market: m,
     selection: m === "spread" ? x.team : x.side, line: x.line, price: x.price,
     model_prob: x.prob, book: null,
-  }, bankroll * 0.01);
+  }, unitSize());
+});
+
+$("#best-bets").addEventListener("click", (e) => {
+  const i = e.target.dataset.bb;
+  if (i == null) return;
+  const b = state.picks.best_bets[i];
+  openTrack({
+    game: `${b.away} @ ${b.home}`, market: "spread", selection: b.team, line: b.line,
+    price: b.price, model_prob: b.prob, book: null,
+  }, unitSize());
 });
 
 $("#week-select").addEventListener("change", (e) => loadPicks(e.target.value));
@@ -428,8 +548,13 @@ async function runMatchup() {
     const m = await api(`/api/matchup/${state.league}?home=${encodeURIComponent(home)}&away=${encodeURIComponent(away)}&neutral=${$("#mu-neutral").checked}`);
     const p = m.prediction;
     $("#matchup").innerHTML = `
+      <div class="panel" style="margin-bottom:12px">
+        <div class="matchup" style="display:flex;justify-content:space-between;align-items:center;font-weight:700">
+          <span>${teamsLine(away, home, $("#mu-neutral").checked)}</span><span class="muted small">${$("#mu-neutral").checked ? "Neutral site" : `at ${esc(home)}`}</span></div>
+        ${winBar(away, home, p.home_win_prob)}
+      </div>
       <div class="cards">
-        <div class="card"><div class="k">Projected score</div><div class="v">${p.away_score.toFixed(0)}–${p.home_score.toFixed(0)}</div><div class="sub">${esc(away)} – ${esc(home)}</div></div>
+        <div class="card accent"><div class="k">Projected score</div><div class="v">${p.away_score.toFixed(0)}–${p.home_score.toFixed(0)}</div><div class="sub">${esc(away)} – ${esc(home)}</div></div>
         <div class="card"><div class="k">${esc(home)} win chance</div><div class="v">${pct(p.home_win_prob)}</div><div class="sub">fair ML ${signed(p.fair_home_ml)} / ${signed(p.fair_away_ml)}</div></div>
         <div class="card"><div class="k">Fair spread</div><div class="v">${esc(home)} ${signed(p.fair_home_spread) || "PK"}</div><div class="sub">projected margin ${signed(p.home_margin)}</div></div>
         <div class="card"><div class="k">Fair total</div><div class="v">${p.total}</div><div class="sub">combined points</div></div>

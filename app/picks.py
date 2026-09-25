@@ -182,3 +182,28 @@ def record(picks: list[dict]) -> dict:
         if "moneyline" in p and p["moneyline"]["result"]:
             _add(out["moneyline"], p["moneyline"])
     return {k: _finish(v) for k, v in sorted(out.items())}
+
+
+BEST_BETS_PER_WEEK = 5
+
+
+def best_bets(picks: list[dict], limit: int = BEST_BETS_PER_WEEK) -> list[dict]:
+    """The week's shortlist: Best-tier spread picks, biggest model edge first.
+
+    Totals and moneylines are left out on purpose: neither has shown a historical edge.
+    """
+    best = [p for p in picks if p.get("spread", {}).get("tier") == "best"]
+    best.sort(key=lambda p: -p["spread"]["edge_pts"])
+    return [{**p["spread"], "game_id": p["game_id"], "home": p["home"], "away": p["away"],
+             "kickoff": p["kickoff"], "completed": p["completed"],
+             "home_score": p["home_score"], "away_score": p["away_score"]}
+            for p in best[:limit]]
+
+
+def best_bets_record(weeks: list[list[dict]]) -> dict:
+    b = _bucket()
+    for picks in weeks:
+        for bet in best_bets(picks):
+            if bet["result"]:
+                _add(b, bet)
+    return _finish(b)

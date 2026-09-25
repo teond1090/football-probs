@@ -4,22 +4,37 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Football Probabilities</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏈</text></svg>">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <header>
-    <div class="brand">Football Probabilities</div>
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 64 40" aria-hidden="true">
+        <ellipse cx="32" cy="20" rx="30" ry="18" fill="#8b4a22"/>
+        <ellipse cx="32" cy="20" rx="30" ry="18" fill="none" stroke="#5c2f14" stroke-width="2"/>
+        <path d="M10 20h44" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+        <path d="M24 16v8M28 16v8M32 16v8M36 16v8M40 16v8" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      <div>
+        <div class="brand-name">Football Probabilities</div>
+        <div class="brand-sub">NFL &amp; college picks · odds · ratings</div>
+      </div>
+    </div>
     <div class="league-toggle" role="tablist">
       <button data-league="nfl" class="active">NFL</button>
       <button data-league="cfb">College</button>
     </div>
     <nav>
-      <button data-tab="picks" class="active">Weekly picks</button>
-      <button data-tab="board">Live odds</button>
-      <button data-tab="ratings">Ratings</button>
-      <button data-tab="matchup">Matchup</button>
-      <button data-tab="backtest">Backtest</button>
-      <button data-tab="bets">My bets</button>
+      <button data-tab="picks" class="active"><span class="ico" aria-hidden="true">📅</span>Weekly picks</button>
+      <button data-tab="board"><span class="ico" aria-hidden="true">💰</span>Live odds</button>
+      <button data-tab="ratings"><span class="ico" aria-hidden="true">📊</span>Ratings</button>
+      <button data-tab="matchup"><span class="ico" aria-hidden="true">⚔️</span>Matchup</button>
+      <button data-tab="backtest"><span class="ico" aria-hidden="true">🧪</span>Backtest</button>
+      <button data-tab="bets"><span class="ico" aria-hidden="true">🎟️</span>My bets</button>
     </nav>
     <div class="status" id="status"></div>
   </header>
@@ -39,8 +54,12 @@
         <a id="picks-csv" class="button secondary" href="#" download>Download CSV</a>
       </div>
       <div id="picks-alert"></div>
+      <div id="picks-hero"></div>
+      <div id="best-bets"></div>
+      <h2 class="section">📈 How the model has done</h2>
       <div id="picks-track" class="cards"></div>
       <p class="muted small" id="picks-track-note"></p>
+      <h2 class="section">🏟️ Every game this week</h2>
       <div id="picks-week-summary"></div>
       <div id="picks" class="games"></div>
     </section>

@@ -18,7 +18,7 @@ from .config import (AUTO_REFRESH_HOURS, CFBD_API_KEY, ODDS_API_KEY, REFRESH_COO
 from .data import cfb, nfl, odds_api
 from .edges import build_board
 from .models.ratings import RatingEngine, build_engine
-from .picks import TIER_ORDER, compute_all_picks, record, week_label
+from .picks import TIER_ORDER, best_bets, best_bets_record, compute_all_picks, record, week_label
 
 LEAGUES = ("nfl", "cfb")
 log = logging.getLogger("football")
@@ -208,8 +208,10 @@ def weekly_picks(league: str, week: str | None = None):
     recent_from = season - 5
 
     def history(lo: int) -> dict:
-        return {"from": lo, "to": season - 1, "record": record(
-            [p for k, ps in all_picks.items() if lo <= k[0] < season for p in ps])}
+        weeks = [ps for k, ps in all_picks.items() if lo <= k[0] < season]
+        return {"from": lo, "to": season - 1,
+                "record": record([p for ps in weeks for p in ps]),
+                "best_bets": best_bets_record(weeks)}
 
     return {
         "league": league,
@@ -220,6 +222,9 @@ def weekly_picks(league: str, week: str | None = None):
             for s in seasons
         ],
         "picks": _sorted_picks(all_picks[key]),
+        "best_bets": best_bets(all_picks[key]),
+        "best_bets_week": best_bets_record([all_picks[key]]),
+        "best_bets_season": best_bets_record([all_picks[k] for k in season_keys]),
         "week_record": record(all_picks[key]),
         "season_record": record([p for k in season_keys for p in all_picks[k]]),
         "history": {"all_time": history(first + 3), "recent": history(recent_from)},
